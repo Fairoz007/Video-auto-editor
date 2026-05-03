@@ -1,9 +1,12 @@
 import os
 import subprocess
 import asyncio
-from typing import List, Optional
-from fastapi import FastAPI, UploadFile, File, Form, WebSocket, BackgroundTasks
+from datetime import datetime
+from typing import Optional
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from moviepy import VideoFileClip, ImageClip, CompositeVideoClip
 from PIL import Image, ImageDraw, ImageFont
@@ -57,8 +60,10 @@ def generate_metadata_line(index=None):
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(STATIC_DIR, exist_ok=True)
 
 FONT_PATH = r"C:\Windows\Fonts\impact.ttf"
 if not os.path.exists(FONT_PATH):
@@ -69,6 +74,8 @@ import threading
 # Global progress storage and lock for thread safety
 progress_updates = {}
 state_lock = threading.Lock()
+job_tasks = {}
+cancelled_jobs = set()
 
 def update_job_status(job_id, **kwargs):
     with state_lock:
@@ -88,6 +95,28 @@ def update_job_status(job_id, **kwargs):
     print(f"[LOG] Job {job_id} updated: {list(kwargs.keys())}")
 
 
+def is_job_cancelled(job_id: str) -> bool:
+    with state_lock:
+        return job_id in cancelled_jobs
+
+
+def register_job(job_id: str, message: str = "Queued"):
+    update_job_status(
+        job_id,
+        status="queued",
+        progress=0,
+        metadata_list=[],
+        active_renders={},
+        message=message,
+        created_at=datetime.utcnow().isoformat() + "Z",
+        updated_at=datetime.utcnow().isoformat() + "Z",
+    )
+
+
+def touch_job(job_id: str):
+    update_job_status(job_id, updated_at=datetime.utcnow().isoformat() + "Z")
+
+
 class VideoConfig(BaseModel):
     width: int
     height: int
@@ -102,6 +131,15 @@ class VideoConfig(BaseModel):
     fps: int
     useGpu: bool
     splitLength: float
+
+
+class PresetConfig(BaseModel):
+    name: str
+    config: VideoConfig
+
+
+class PresetsImportPayload(BaseModel):
+    presets: dict
 
 def check_gpu():
     """Checks if NVIDIA GPU encoding is available."""
@@ -157,6 +195,9 @@ async def process_video_task(job_id: str, input_path: str, config: VideoConfig, 
     target_id = report_job_id or job_id
     print(f"[LOG] Starting task {job_id}, reporting to {target_id}")
     try:
+        if is_job_cancelled(target_id):
+            update_job_status(target_id, status="cancelled", message="Job cancelled before start")
+            return
         # Initialize target_id fully before any segments start
         update_job_status(target_id, status="processing", message="Initializing pipeline...")
         update_job_status(job_id, status="loading", progress=5)
@@ -175,6 +216,8 @@ async def process_video_task(job_id: str, input_path: str, config: VideoConfig, 
 
         async def process_segment(i):
             nonlocal finished_count
+            if is_job_cancelled(target_id):
+                return
             start_t = i * segment_length
             end_t = min((i + 1) * segment_length, total_duration)
             
@@ -242,6 +285,10 @@ async def process_video_task(job_id: str, input_path: str, config: VideoConfig, 
             write_args["logger"] = segment_logger
 
             async with semaphore:
+                if is_job_cancelled(target_id):
+                    final_video.close()
+                    seg_clip.close()
+                    return
                 if "active_renders" not in progress_updates[target_id]:
                     progress_updates[target_id]["active_renders"] = {}
                 # Use a unique key for active renders to avoid collisions in folder mode
@@ -283,13 +330,18 @@ async def process_video_task(job_id: str, input_path: str, config: VideoConfig, 
 
         # Final Cleanup
         clip.close()
-        
-        update_job_status(job_id, status="completed", progress=100, message=f"Finished all {num_segments} parts FAST!")
+
+        if is_job_cancelled(target_id):
+            update_job_status(target_id, status="cancelled", message="Job cancelled by user")
+        else:
+            update_job_status(job_id, status="completed", progress=100, message=f"Finished all {num_segments} parts FAST!")
         print(f"[LOG] Task {job_id} finished successfully")
 
     except Exception as e:
         print(f"[ERROR] Task {job_id} failed: {str(e)}")
         update_job_status(job_id, status="error", message=str(e))
+    finally:
+        touch_job(target_id)
 
 @app.get("/select-folder")
 async def select_folder():
@@ -342,6 +394,18 @@ async def upload_video(file: UploadFile = File(...)):
         f.write(await file.read())
     return {"job_id": job_id, "file_path": file_path}
 
+
+@app.post("/upload-batch")
+async def upload_batch(files: list[UploadFile] = File(...)):
+    uploaded = []
+    for file in files:
+        job_id = str(uuid.uuid4())
+        file_path = os.path.join(UPLOAD_DIR, f"{job_id}_{file.filename}")
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
+        uploaded.append({"job_id": job_id, "file_path": file_path, "filename": file.filename})
+    return {"count": len(uploaded), "items": uploaded}
+
 @app.post("/process")
 async def start_process(data: str = Form(...)):
     payload = json.loads(data)
@@ -356,12 +420,231 @@ async def start_process(data: str = Form(...)):
     await process_video_task(job_id, file_path, config, report_job_id)
     return {"status": "completed", "job_id": job_id}
 
+
+@app.post("/process-async")
+async def start_process_async(data: str = Form(...)):
+    payload = json.loads(data)
+    config = VideoConfig(**payload["config"])
+    job_id = payload.get("job_id", str(uuid.uuid4()))
+    file_path = payload["file_path"]
+
+    register_job(job_id, message="Queued for background processing")
+    with state_lock:
+        cancelled_jobs.discard(job_id)
+
+    task = asyncio.create_task(process_video_task(job_id, file_path, config))
+    with state_lock:
+        job_tasks[job_id] = task
+
+    return {"status": "queued", "job_id": job_id}
+
+
+@app.post("/process-batch-async")
+async def process_batch_async(data: str = Form(...)):
+    payload = json.loads(data)
+    config = VideoConfig(**payload["config"])
+    items = payload.get("items", [])
+    if not items:
+        raise HTTPException(status_code=400, detail="No uploaded items provided")
+
+    batch_job_id = f"batch_{uuid.uuid4().hex[:8]}"
+    register_job(batch_job_id, message=f"Batch queued: {len(items)} videos")
+
+    async def runner():
+        try:
+            update_job_status(batch_job_id, status="processing", message="Batch processing started")
+            for index, item in enumerate(items, start=1):
+                if is_job_cancelled(batch_job_id):
+                    update_job_status(batch_job_id, status="cancelled", message="Batch cancelled")
+                    return
+                sub_job_id = item.get("job_id", f"{batch_job_id}_{index}")
+                await process_video_task(sub_job_id, item["file_path"], config, report_job_id=batch_job_id)
+                update_job_status(
+                    batch_job_id,
+                    progress=int((index / len(items)) * 100),
+                    message=f"Completed {index}/{len(items)} videos",
+                )
+            if not is_job_cancelled(batch_job_id):
+                update_job_status(batch_job_id, status="completed", progress=100, message="Batch completed")
+        except Exception as e:
+            update_job_status(batch_job_id, status="error", message=str(e))
+        finally:
+            touch_job(batch_job_id)
+
+    task = asyncio.create_task(runner())
+    with state_lock:
+        job_tasks[batch_job_id] = task
+    return {"status": "queued", "job_id": batch_job_id}
+
 @app.get("/status/{job_id}")
 async def get_status(job_id: str):
     data = progress_updates.get(job_id, {"status": "not_found"})
     if data["status"] != "not_found":
         print(f"[LOG] Status check {job_id}: {data.get('status')} | Progress: {data.get('progress')}% | Metadata Count: {len(data.get('metadata_list', []))}")
     return data
+
+
+def _read_presets():
+    presets_path = os.path.join(BASE_DIR, "presets.json")
+    if not os.path.exists(presets_path):
+        return {}
+    with open(presets_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_presets(data):
+    presets_path = os.path.join(BASE_DIR, "presets.json")
+    with open(presets_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "gpu_available": check_gpu(),
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+@app.get("/outputs")
+async def list_outputs():
+    files = []
+    for name in os.listdir(OUTPUT_DIR):
+        path = os.path.join(OUTPUT_DIR, name)
+        if os.path.isfile(path):
+            stat = os.stat(path)
+            files.append(
+                {
+                    "name": name,
+                    "size_bytes": stat.st_size,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "download_url": f"/outputs/{name}",
+                }
+            )
+    files.sort(key=lambda f: f["modified_at"], reverse=True)
+    return {"count": len(files), "files": files}
+
+
+@app.get("/outputs/{filename}")
+async def download_output(filename: str):
+    path = os.path.join(OUTPUT_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Output file not found")
+    return FileResponse(path, filename=filename)
+
+
+@app.delete("/outputs/{filename}")
+async def delete_output(filename: str):
+    path = os.path.join(OUTPUT_DIR, filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Output file not found")
+    os.remove(path)
+    return {"status": "deleted", "filename": filename}
+
+
+@app.get("/presets")
+async def list_presets():
+    return _read_presets()
+
+
+@app.post("/presets")
+async def save_preset(payload: PresetConfig):
+    presets = _read_presets()
+    presets[payload.name] = payload.config.model_dump()
+    _write_presets(presets)
+    return {"status": "saved", "name": payload.name}
+
+
+@app.delete("/presets/{name}")
+async def delete_preset(name: str):
+    presets = _read_presets()
+    if name not in presets:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    del presets[name]
+    _write_presets(presets)
+    return {"status": "deleted", "name": name}
+
+
+@app.get("/presets/export")
+async def export_presets():
+    return {"presets": _read_presets()}
+
+
+@app.post("/presets/import")
+async def import_presets(payload: PresetsImportPayload):
+    if not isinstance(payload.presets, dict):
+        raise HTTPException(status_code=400, detail="Invalid presets payload")
+    existing = _read_presets()
+    existing.update(payload.presets)
+    _write_presets(existing)
+    return {"status": "imported", "count": len(payload.presets)}
+
+
+@app.get("/jobs")
+async def list_jobs():
+    with state_lock:
+        items = [{"job_id": job_id, **payload} for job_id, payload in progress_updates.items()]
+    items.sort(key=lambda j: j.get("progress", 0), reverse=True)
+    return {"count": len(items), "jobs": items}
+
+
+@app.delete("/jobs/{job_id}")
+async def clear_job(job_id: str):
+    with state_lock:
+        if job_id not in progress_updates:
+            raise HTTPException(status_code=404, detail="Job not found")
+        del progress_updates[job_id]
+    return {"status": "deleted", "job_id": job_id}
+
+
+@app.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    with state_lock:
+        cancelled_jobs.add(job_id)
+        if job_id in progress_updates:
+            progress_updates[job_id]["status"] = "cancelled"
+            progress_updates[job_id]["message"] = "Cancellation requested"
+            progress_updates[job_id]["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        task = job_tasks.get(job_id)
+
+    if task and not task.done():
+        task.cancel()
+    return {"status": "cancelling", "job_id": job_id}
+
+
+@app.get("/analytics")
+async def analytics():
+    with state_lock:
+        jobs = list(progress_updates.values())
+    status_count = {}
+    for job in jobs:
+        s = job.get("status", "unknown")
+        status_count[s] = status_count.get(s, 0) + 1
+
+    videos = [f for f in os.listdir(OUTPUT_DIR) if f.lower().endswith(".mp4")]
+    total_size = 0
+    for name in videos:
+        total_size += os.path.getsize(os.path.join(OUTPUT_DIR, name))
+
+    return {
+        "jobs_total": len(jobs),
+        "jobs_by_status": status_count,
+        "output_videos": len(videos),
+        "output_size_mb": round(total_size / (1024 * 1024), 2),
+    }
+
+
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/")
+async def index():
+    index_path = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"message": "UI not found. Add app/backend/static/index.html"}
 
 if __name__ == "__main__":
     import uvicorn

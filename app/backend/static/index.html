@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Auto Editor Pro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/unique.css" />
+</head>
+<body>
+  <div class="bg-blur bg-1"></div>
+  <div class="bg-blur bg-2"></div>
+  <div id="toast" class="toast"></div>
+  <div class="container">
+    <header class="hero">
+      <div class="topbar">
+        <h1>Video Auto Editor Pro</h1>
+        <button id="themeToggleBtn" class="btn">Toggle Theme</button>
+      </div>
+      <p>Upload, style, split, track progress, and download outputs from one dashboard.</p>
+      <div class="hero-badges">
+        <span>Fast Render</span>
+        <span>Batch Queue</span>
+        <span>Animated UI</span>
+        <span>Drag & Drop</span>
+      </div>
+    </header>
+
+    <div class="studio-layout">
+      <aside class="card reveal studio-side">
+        <h2>Studio Control</h2>
+        <p class="muted">A unique console workflow for clip production.</p>
+        <div class="hero-badges side-badges">
+          <span>Neon Mode</span>
+          <span>Realtime Queue</span>
+          <span>Preset Sync</span>
+        </div>
+      </aside>
+
+      <section class="card reveal studio-main">
+        <h2>Video Processing</h2>
+      <div id="dropZone" class="drop-zone">
+        <strong>Drop video files here</strong>
+        <span>or use the file input below</span>
+      </div>
+      <div id="fileSummary" class="muted">No files selected.</div>
+      <div class="quick-presets">
+        <button class="chip-btn" data-preset="cinematic">Cinematic</button>
+        <button class="chip-btn" data-preset="fast">Fast Export</button>
+        <button class="chip-btn" data-preset="ultra">Ultra Quality</button>
+      </div>
+      <div class="grid">
+        <label>Video File(s) <input id="file" type="file" accept="video/*" multiple /></label>
+        <label>Top Text <input id="topText" value="Part {}" /></label>
+        <label>Bottom Text <input id="bottomText" value="Five Smokes" /></label>
+        <label>Resolution Width <input id="width" type="number" value="1080" /></label>
+        <label>Resolution Height <input id="height" type="number" value="1920" /></label>
+        <label>Font Size <input id="fontSize" type="number" value="120" /></label>
+        <label>Text Color <input id="textColor" value="#ffd000" /></label>
+        <label>Stroke Color <input id="strokeColor" value="black" /></label>
+        <label>Stroke Width <input id="strokeWidth" type="number" value="8" /></label>
+        <label>Zoom Start <input id="zoomStart" type="number" value="1.0" step="0.01" /></label>
+        <label>Zoom End <input id="zoomEnd" type="number" value="1.1" step="0.01" /></label>
+        <label>FPS <input id="fps" type="number" value="30" /></label>
+        <label>Split Length (seconds) <input id="splitLength" type="number" value="45" step="1" /></label>
+        <label><input id="useGpu" type="checkbox" checked /> Use GPU</label>
+      </div>
+      <div class="actions">
+        <button id="startBtn" class="btn primary">Process Single</button>
+        <button id="startBatchBtn" class="btn">Process Batch</button>
+        <button id="cancelBtn" class="btn danger">Cancel Current Job</button>
+        <button id="savePresetBtn" class="btn">Save Preset</button>
+        <button id="exportPresetsBtn" class="btn">Export Presets</button>
+        <label class="file-inline">Import Presets <input id="importPresetsFile" type="file" accept="application/json" /></label>
+        <select id="presetSelect"><option value="">Load preset</option></select>
+      </div>
+      <div id="jobInfo" class="muted"></div>
+      <div class="progress-wrap"><div id="progressBar"></div></div>
+      <pre id="metadataBox"></pre>
+      </section>
+    </div>
+
+    <section class="card reveal">
+      <h2>Outputs</h2>
+      <input id="outputSearch" placeholder="Search outputs..." />
+      <button id="refreshOutputsBtn" class="btn">Refresh Outputs</button>
+      <ul id="outputList"></ul>
+    </section>
+
+    <section class="card reveal">
+      <h2>Analytics & Jobs</h2>
+      <button id="refreshJobsBtn" class="btn">Refresh Jobs</button>
+      <label><input id="autoRefreshJobs" type="checkbox" checked /> Auto refresh jobs</label>
+      <div id="analyticsBox" class="muted"></div>
+      <ul id="jobsList"></ul>
+    </section>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
