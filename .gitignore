@@ -1,0 +1,22 @@
+
+# Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+# Media and Output
+OUTPUTY/
+clip/
+Clips/
+Movies/
+Output/
+Shorts_Output/
+Error_Uploads/
+*.mp4
+*.pyc
+__pycache__/
+
+# Logs and Data
+used.log

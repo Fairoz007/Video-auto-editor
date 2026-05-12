@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 import json
 from moviepy import VideoFileClip
 import imageio_ffmpeg
+import random
 
 def get_ffmpeg_path():
     return imageio_ffmpeg.get_ffmpeg_exe()
@@ -36,15 +37,21 @@ def create_text_image(text, width, height, font_size=80, color="#ffd000", stroke
     except:
         font = ImageFont.load_default()
 
-    bbox = draw.textbbox((0, 0), text, font=font)
+    words = text.split()
+    if len(words) > 3:
+        display_text = " ".join(words[:3]) + "\n" + " ".join(words[3:])
+    else:
+        display_text = text
+
+    bbox = draw.textbbox((0, 0), display_text, font=font, align="center")
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
     
     x = (width - text_width) // 2
     y = (height - text_height) // 2
     
-    draw.text((x, y), text, font=font, fill=color, 
-              stroke_width=stroke_width, stroke_fill=stroke_color)
+    draw.text((x, y), display_text, font=font, fill=color, 
+              stroke_width=stroke_width, stroke_fill=stroke_color, align="center")
     
     img.save(output_path)
     return output_path
@@ -58,9 +65,10 @@ def check_gpu():
     except:
         return False
 
-def render_output(clips_info, width, height, title_img_path, output_folder, output_idx, target_duration):
+def render_output(clips_info, width, height, title_text, title_img_path, output_folder, output_idx, target_duration):
     print(f"\n--- Rendering Output {output_idx} using GPU ---")
-    output_path = os.path.join(output_folder, f"VALORANT SHORTS - {output_idx}.mp4")
+    safe_title = "".join(c for c in title_text if c not in r'<>:"/\|?*').strip()
+    output_path = os.path.join(output_folder, f"{safe_title} - {output_idx}.mp4")
     
     inputs = []
     filter_chains = []
@@ -135,14 +143,14 @@ def render_output(clips_info, width, height, title_img_path, output_folder, outp
 
 def main():
     parser = argparse.ArgumentParser(description="Autoedit Videos")
-    parser.add_argument("--title", type=str, required=True, help="Title overlay text")
+    parser.add_argument("--title", type=str, required=False, default="VALORANT SHORTS", help="Title overlay text")
     parser.add_argument("--seconds", type=float, required=True, help="Duration of final videos")
     parser.add_argument("--resolution", type=str, required=True, help="Resolution e.g. 1080x1920")
     args = parser.parse_args()
 
     width, height = map(int, args.resolution.lower().split('x'))
     target_duration = args.seconds
-    title_text = args.title
+    base_title_text = args.title
 
     input_folder = "clip"
     output_folder = "OUTPUTY"
@@ -167,10 +175,16 @@ def main():
         
     print(f"Found {len(video_files)} video files.")
 
-    # Create Title Image file
-    title_img_path = os.path.join(output_folder, "temp_title.png")
-    create_text_image(title_text, width, int(height * 0.15), font_size=int(width * 0.08), output_path=title_img_path)
-    
+    # Load titles if available
+    titles_list = []
+    titles_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "titles.txt")
+    if os.path.exists(titles_path):
+        with open(titles_path, "r", encoding="utf-8") as f:
+            titles_list = [line.strip() for line in f if line.strip()]
+    if not titles_list and os.path.exists("titles.txt"):
+        with open("titles.txt", "r", encoding="utf-8") as f:
+            titles_list = [line.strip() for line in f if line.strip()]
+
     output_idx = 1
     file_idx = 0
     clip_offset = 0.0
@@ -206,14 +220,21 @@ def main():
                 clip_offset = 0.0
                 
         if current_duration >= target_duration - 0.1: # Allow floating point tolerance
-            render_output(current_clips, width, height, title_img_path, output_folder, output_idx, target_duration)
+            title_text = random.choice(titles_list) if titles_list else base_title_text
+            
+            title_img_path = os.path.join(output_folder, f"temp_title_{output_idx}.png")
+            # Using height * 0.25 to accommodate two lines of text comfortably
+            create_text_image(title_text, width, int(height * 0.25), font_size=int(width * 0.08), output_path=title_img_path)
+            
+            render_output(current_clips, width, height, title_text, title_img_path, output_folder, output_idx, target_duration)
+            
+            # Cleanup temp title
+            if os.path.exists(title_img_path):
+                os.remove(title_img_path)
+            
             output_idx += 1
         else:
             print(f"Not enough footage remaining for another {target_duration}s video. Skipping remaining {current_duration:.2f}s.")
-            
-    # Cleanup temp title
-    if os.path.exists(title_img_path):
-        os.remove(title_img_path)
 
 if __name__ == "__main__":
     main()
