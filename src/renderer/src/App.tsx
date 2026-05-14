@@ -6,7 +6,7 @@ import {
   Maximize2, Image as ImageIcon,
   Home, Type, Sparkles, SlidersHorizontal, Music, MessageSquare, Upload,
   Undo, Redo, Scissors, Trash2, Copy, CheckCircle2, ChevronDown, AlignLeft, AlignCenter, AlignRight, List,
-  Mic, Crosshair, ChevronRight, Download, Loader2, MousePointer2
+  Mic, Crosshair, ChevronRight, Download, Loader2, MousePointer2, X
 } from 'lucide-react'
 import clsx from 'clsx'
 import AutomationDashboard from './components/AutomationDashboard'
@@ -77,6 +77,13 @@ export default function App(): React.JSX.Element {
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [history, setHistory] = useState<Track[][]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const historyIndexRef = useRef(historyIndex);
+  useEffect(() => { historyIndexRef.current = historyIndex; }, [historyIndex]);
+
+  // Export Dialog State
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const pushHistory = useCallback((newTracks: Track[]) => {
     setHistory(prev => {
@@ -399,7 +406,7 @@ export default function App(): React.JSX.Element {
         videoElement.src = `file://${file}`;
         videoElement.onloadedmetadata = () => {
           const dur = videoElement.duration;
-          if (dur > totalDuration) setTotalDuration(dur + 10);
+          setTotalDuration(prevDur => dur > prevDur ? dur + 10 : prevDur);
           
           const newVideoClip: Clip = {
             id: Math.random().toString(36).substr(2, 9),
@@ -411,8 +418,18 @@ export default function App(): React.JSX.Element {
             sourceFile: file,
           };
           
-          const newTracks = tracks.map(t => t.id === 'v1' ? { ...t, clips: [...t.clips, newVideoClip] } : t);
-          pushHistory(newTracks);
+          setTracks(prevTracks => {
+             const newTracks = prevTracks.map(t => t.id === 'v1' ? { ...t, clips: [...t.clips, newVideoClip] } : t);
+             setHistory(prevHistory => {
+                const idx = historyIndexRef.current;
+                const newHistory = prevHistory.slice(0, idx + 1);
+                newHistory.push(newTracks);
+                if (newHistory.length > 50) newHistory.shift();
+                return newHistory;
+             });
+             setHistoryIndex(prev => Math.min(prev + 1, 49));
+             return newTracks;
+          });
         };
         
         if (autoCut) {
@@ -462,6 +479,15 @@ export default function App(): React.JSX.Element {
 
   const handleRender = async () => {
     setIsProcessing(true)
+    setShowExportDialog(true)
+    setExportProgress(0)
+    setExportError(null)
+    
+    // Simulate progress for the Export Dialog UI since runPython is blocking
+    const progressInterval = setInterval(() => {
+       setExportProgress(p => Math.min(p + (Math.random() * 5), 95));
+    }, 1000);
+
     try {
       let script = 'autoedit.py'
       if (scriptMode === 'movie') script = 'movie_editor.py'
@@ -481,7 +507,9 @@ export default function App(): React.JSX.Element {
         // @ts-ignore
         const res = await window.api.runPython(script, args)
         
+        clearInterval(progressInterval);
         if (res.success) {
+          setExportProgress(100);
           setRenderTasks(prev => [...prev, {
             id: Math.random().toString(36).substring(7),
             title: script,
@@ -490,10 +518,15 @@ export default function App(): React.JSX.Element {
             progress: 100
           }])
         } else {
+          setExportError(res.output || "Export failed.");
           console.error('Script failed:', res.output)
         }
+      } else {
+        clearInterval(progressInterval);
       }
     } catch (error) {
+      clearInterval(progressInterval);
+      setExportError(String(error));
       console.error('Render failed:', error)
     } finally {
       setIsProcessing(false)
@@ -871,6 +904,97 @@ export default function App(): React.JSX.Element {
           )}
         </div>
       </div>
+
+      {/* Export Dialog Overlay */}
+      {showExportDialog && (
+        <>
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 animate-in fade-in duration-200" onClick={() => !isProcessing && setShowExportDialog(false)} />
+          <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[60] bg-[#0d0d12] rounded-xl shadow-2xl border border-[#262630] p-8 w-[90vw] max-w-md animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-4">
+                {exportProgress >= 100 && !exportError ? (
+                  <>
+                    <div className="w-12 h-12 rounded-full bg-success-500/20 flex items-center justify-center ring-1 ring-success-500/50">
+                      <Download className="w-6 h-6 text-success-500" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xl font-bold text-white block">Export Complete</span>
+                      <span className="text-sm text-white/50">Your video is ready to share.</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {isProcessing ? (
+                      <div className="w-12 h-12 rounded-full bg-brand-500/10 flex items-center justify-center">
+                        <Loader2 className="w-6 h-6 text-brand-500 animate-spin" />
+                      </div>
+                    ) : (
+                      <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center border border-white/10">
+                        <Download className="w-6 h-6 text-white/80" />
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-xl font-bold text-white block">{exportError ? "Export Failed" : isProcessing ? "Rendering Video..." : "Exporting..."}</span>
+                      <span className="text-sm text-white/50">{exportError ? "Please try again." : "This might take a moment."}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+              {!isProcessing && (
+                <button onClick={() => setShowExportDialog(false)} className="p-2 hover:bg-white/10 text-white/40 hover:text-white rounded-full transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+
+            {exportError && (
+              <div className="mb-6 animate-in slide-in-from-top-2">
+                <div className="bg-danger-500/10 border border-danger-500/20 rounded-xl p-4 flex items-start gap-3">
+                  <div className="p-1 bg-danger-500/20 rounded-full">
+                    <X className="w-3 h-3 text-danger-400" />
+                  </div>
+                  <p className="whitespace-pre-wrap break-words text-sm text-danger-400 leading-relaxed overflow-hidden h-24 overflow-y-auto">
+                    {exportError}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {(isProcessing || (exportProgress > 0 && exportProgress < 100)) && (
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs font-medium text-white/50 uppercase tracking-wider">
+                    <span>Rendering Frames</span>
+                    <span className="font-mono text-white/90">{exportProgress.toFixed(0)}%</span>
+                  </div>
+                  <div className="h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                    <div className="h-full bg-brand-500 shadow-[0_0_10px_rgba(116,69,255,0.3)] transition-all duration-300 ease-out" style={{ width: `${exportProgress}%` }} />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white/5 rounded-xl p-3 border border-white/5">
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Format</div>
+                    <div className="text-white/90 font-medium text-sm">MP4 Video</div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-3 border border-white/5">
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Status</div>
+                    <div className="text-white/90 font-medium text-sm">{isProcessing ? "Encoding" : "Done"}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {exportProgress >= 100 && !exportError && (
+              <div className="pt-4">
+                <button onClick={() => setShowExportDialog(false)} className="w-full py-3 bg-brand-500 hover:bg-brand-600 text-white font-medium rounded-xl transition-colors">
+                  Close
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Footer Status Bar */}
       <footer className="h-8 bg-[#0d0d12] border-t border-[#262630] flex items-center px-4 justify-between text-[9px] font-mono text-white/50">
