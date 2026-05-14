@@ -550,7 +550,7 @@ export default function App(): React.JSX.Element {
         <div className="flex items-center space-x-6 window-no-drag">
           <div className="flex items-center space-x-2 text-brand-400">
             <Video className="w-4 h-4 fill-brand-500" />
-            <span className="font-semibold text-xs tracking-wide text-white">Video Auto Editor Pro</span>
+            <span className="font-semibold text-xs tracking-wide text-white">AutoVideo Pro</span>
           </div>
           <nav className="flex space-x-4 text-[11px] text-white/70">
             <button className="hover:text-white transition-colors">File</button>

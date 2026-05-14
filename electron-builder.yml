@@ -1,5 +1,5 @@
-appId: com.fairoz.videoeditor
-productName: Video Auto Editor Pro
+appId: com.fairoz.autovideo.pro
+productName: AutoVideo Pro
 directories:
   buildResources: build
 files:
