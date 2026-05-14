@@ -68,8 +68,10 @@ export default function App(): React.JSX.Element {
   const [fontSize, setFontSize] = useState(120)
   const [textColor, setTextColor] = useState("#ffd000")
   const [strokeColor, setStrokeColor] = useState("#000000")
+  const [textShadowColor, setTextShadowColor] = useState("#000000")
   const [strokeWidth, setStrokeWidth] = useState(4)
   const [fps, setFps] = useState(60)
+  const [resolution, setResolution] = useState("1080x1920")
   const [autoCut, setAutoCut] = useState(true)
   const [useGpu, setUseGpu] = useState(true)
   const [scriptMode, setScriptMode] = useState('autoedit')
@@ -323,7 +325,7 @@ export default function App(): React.JSX.Element {
       }
       
       const targetTime = activeClip.sourceStart + (currentTime - activeClip.start);
-      if (Math.abs(videoRef.current.currentTime - targetTime) > 0.15) {
+      if (!isPlaying && Math.abs(videoRef.current.currentTime - targetTime) > 0.15) {
         videoRef.current.currentTime = targetTime;
       }
       
@@ -344,17 +346,24 @@ export default function App(): React.JSX.Element {
     
     const tick = (now: number) => {
       if (isPlaying) {
-        const deltaSec = (now - lastTime) / 1000;
-        lastTime = now;
+        const videoTrack = tracks.find(t => t.type === 'video');
+        const activeClip = videoTrack?.clips.find(c => currentTime >= c.start && currentTime < c.start + c.duration);
         
         setCurrentTime(prev => {
-          let next = prev + deltaSec;
+          let next = prev;
+          if (activeClip && videoRef.current && !videoRef.current.paused) {
+            next = activeClip.start + (videoRef.current.currentTime - activeClip.sourceStart);
+          } else {
+            const deltaSec = (now - lastTime) / 1000;
+            next = prev + deltaSec;
+          }
           if (next >= totalDuration) {
             setIsPlaying(false);
             return prev;
           }
           return next;
         });
+        lastTime = now;
         animationFrame = requestAnimationFrame(tick);
       }
     };
@@ -363,7 +372,7 @@ export default function App(): React.JSX.Element {
       animationFrame = requestAnimationFrame(tick);
     }
     return () => cancelAnimationFrame(animationFrame);
-  }, [isPlaying, totalDuration]);
+  }, [isPlaying, totalDuration, tracks, currentTime]);
 
 
   useEffect(() => {
@@ -412,6 +421,22 @@ export default function App(): React.JSX.Element {
     return () => clearInterval(interval)
   }, [renderTasks])
 
+  useEffect(() => {
+    if (showExportDialog && renderTasks.length > 0) {
+      const latestTask = renderTasks[renderTasks.length - 1];
+      if (latestTask.progress > exportProgress) {
+        setExportProgress(latestTask.progress);
+      }
+      if (latestTask.status === 'error' || latestTask.status?.toLowerCase().includes('error')) {
+        setExportError(latestTask.details || 'Render failed.');
+        setIsProcessing(false);
+      }
+      if (latestTask.progress >= 100 || latestTask.status === 'Completed') {
+        setExportProgress(100);
+        setIsProcessing(false);
+      }
+    }
+  }, [renderTasks, showExportDialog, exportProgress]);
 
   const handleSelectFile = async () => {
     try {
@@ -474,65 +499,40 @@ export default function App(): React.JSX.Element {
     setExportProgress(0)
     setExportError(null)
     
-    // Simulate progress for the Export Dialog UI since runPython is blocking
-    const progressInterval = setInterval(() => {
-       setExportProgress(p => Math.min(p + (Math.random() * 5), 95));
-    }, 1000);
-
     try {
-      let script = 'autoedit.py'
-      if (scriptMode === 'movie') script = 'movie_editor.py'
-      if (scriptMode === 'shorts') script = 'shorts_editor.py'
-      const args = [
-        '--title', topText,
-        '--seconds', videoDuration.toString(),
-        '--resolution', '1080x1920'
-      ]
-      
-      if (selectedFile) {
-        args.push('--input', selectedFile)
+      const payload = {
+        tracks: tracks,
+        resolution: resolution,
+        fps: fps,
+        duration: totalDuration,
+        textColor,
+        strokeColor,
+        textShadowColor,
+        strokeWidth
       }
       
-      const effectTrack = tracks.find(t => t.type === 'effect');
-      if (effectTrack) {
-        // @ts-ignore
-        const activeLutClip = effectTrack.clips.find(c => c.lutPath);
-        if (activeLutClip) {
-           // @ts-ignore
-           args.push('--lut', activeLutClip.lutPath);
-        }
-        
-        // Find if there's a transition dropped (simplified logic: just pick the first transition)
-        const transitionClip = effectTrack.clips.find(c => c.name !== activeLutClip?.name);
-        if (transitionClip && !activeLutClip) {
-           args.push('--transition', transitionClip.name);
-        }
-      }
-
-      // @ts-ignore
-      if (window.api && window.api.runPython) {
-        // @ts-ignore
-        const res = await window.api.runPython(script, args)
-        
-        clearInterval(progressInterval);
-        if (res.success) {
-          setExportProgress(100);
-          setRenderTasks(prev => [...prev, {
-            id: Math.random().toString(36).substring(7),
-            title: script,
-            details: `Completed successfully`,
-            status: "Completed",
-            progress: 100
-          }])
-        } else {
-          setExportError(res.output || "Export failed.");
-          console.error('Script failed:', res.output)
-        }
+      const formData = new URLSearchParams()
+      formData.append('data', JSON.stringify(payload))
+      
+      const res = await fetch('http://localhost:8000/process-timeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData.toString()
+      })
+      
+      const data = await res.json()
+      if (data.status === 'started' && data.job_id) {
+        setRenderTasks(prev => [...prev, {
+          id: data.job_id,
+          title: 'Timeline Export',
+          details: 'Rendering with FFmpeg...',
+          status: 'Rendering 0%',
+          progress: 0
+        }])
       } else {
-        clearInterval(progressInterval);
+        setExportError("Failed to start export.")
       }
     } catch (error) {
-      clearInterval(progressInterval);
       setExportError(String(error));
       console.error('Render failed:', error)
     } finally {
@@ -611,16 +611,24 @@ export default function App(): React.JSX.Element {
             </div>
             <div className="space-y-1">
               <label className="text-[10px] text-white/50">Resolution</label>
-              <div className="flex items-center justify-between bg-[#1f1f26] border border-[#262630] rounded px-3 py-1.5 cursor-pointer">
-                <span className="text-xs text-white/90">1080x1920 (9:16)</span>
-                <ChevronDown className="w-3 h-3 text-white/50" />
+              <div className="flex items-center justify-between bg-[#1f1f26] border border-[#262630] rounded px-2 py-1 relative">
+                <select value={resolution} onChange={e => setResolution(e.target.value)} className="bg-transparent text-xs text-white/90 outline-none w-full appearance-none cursor-pointer">
+                  <option value="1080x1920">1080x1920 (9:16)</option>
+                  <option value="1920x1080">1920x1080 (16:9)</option>
+                  <option value="1080x1080">1080x1080 (1:1)</option>
+                </select>
+                <ChevronDown className="w-3 h-3 text-white/50 absolute right-2 pointer-events-none" />
               </div>
             </div>
             <div className="space-y-1">
               <label className="text-[10px] text-white/50">Frame Rate</label>
-              <div className="flex items-center justify-between bg-[#1f1f26] border border-[#262630] rounded px-3 py-1.5 cursor-pointer">
-                <span className="text-xs text-white/90">60 FPS</span>
-                <ChevronDown className="w-3 h-3 text-white/50" />
+              <div className="flex items-center justify-between bg-[#1f1f26] border border-[#262630] rounded px-2 py-1 relative">
+                <select value={fps} onChange={e => setFps(Number(e.target.value))} className="bg-transparent text-xs text-white/90 outline-none w-full appearance-none cursor-pointer">
+                  <option value="24">24 FPS</option>
+                  <option value="30">30 FPS</option>
+                  <option value="60">60 FPS</option>
+                </select>
+                <ChevronDown className="w-3 h-3 text-white/50 absolute right-2 pointer-events-none" />
               </div>
             </div>
           </div>
@@ -658,7 +666,7 @@ export default function App(): React.JSX.Element {
                 <div className="flex-1 flex flex-col min-w-0 relative">
                    <div className="h-12 flex items-center justify-center space-x-4 border-b border-[#262630] bg-[#141419]">
                      <div className="flex items-center space-x-2 bg-[#0d0d12] border border-[#262630] rounded-md px-2 py-1">
-                       <span className="text-[10px] text-white/70">1080x1920 (9:16)</span>
+                       <span className="text-[10px] text-white/70">{resolution}</span>
                      </div>
                      <div className="flex items-center space-x-2 bg-[#0d0d12] border border-[#262630] rounded-md px-2 py-1">
                        <span className="text-[10px] text-white/70">{fps} FPS</span>
@@ -671,6 +679,7 @@ export default function App(): React.JSX.Element {
                        <video 
                          ref={videoRef}
                          className="absolute inset-0 w-full h-full object-contain z-0"
+                         style={{ filter: tracks.find(t => t.type === 'effect')?.clips.some(c => currentTime >= c.start && currentTime < c.start + c.duration && c.lutPath) ? 'contrast(1.2) saturate(1.2) sepia(0.2)' : 'none' }}
                          muted
                        />
                        
@@ -682,7 +691,7 @@ export default function App(): React.JSX.Element {
                                <div className="text-center font-['Bebas_Neue']" style={{ 
                                    WebkitTextStroke: `${strokeWidth}px ${strokeColor}`
                                }}>
-                                  <h1 className="text-5xl text-white drop-shadow-lg tracking-wider uppercase leading-tight" style={{ textShadow: `0px ${strokeWidth}px 10px rgba(0,0,0,0.8)` }}>
+                                  <h1 className="text-5xl text-white drop-shadow-lg tracking-wider uppercase leading-tight" style={{ color: textColor, textShadow: `0px ${strokeWidth}px 10px ${textShadowColor}` }}>
                                     {clip.text || topText}
                                   </h1>
                                </div>
@@ -758,6 +767,7 @@ export default function App(): React.JSX.Element {
                           />
                           <ColorPropRow label="Fill Color" color={textColor} value={fontSize} onChangeColor={setTextColor} onChangeValue={setFontSize} />
                           <ColorPropRow label="Stroke Color" color={strokeColor} value={strokeWidth} onChangeColor={setStrokeColor} onChangeValue={setStrokeWidth} />
+                          <ColorPropRow label="Shadow Color" color={textShadowColor} value={5} onChangeColor={setTextShadowColor} />
                         </div>
                       </div>
                     );
@@ -923,18 +933,12 @@ export default function App(): React.JSX.Element {
                             const textPreset = e.dataTransfer.getData('textPreset');
 
                             if (file) {
-                              const videoElement = document.createElement('video');
-                              videoElement.src = `file://${file}`;
-                              videoElement.onloadedmetadata = () => {
-                                const dur = videoElement.duration;
-                                setTotalDuration(prevDur => dur + newTime > prevDur ? dur + newTime + 10 : prevDur);
-                                
                                 const newVideoClip: Clip = {
                                   id: Math.random().toString(36).substr(2, 9),
                                   name: file.split('/').pop() || 'Video',
                                   type: track.type,
                                   start: newTime,
-                                  duration: dur,
+                                  duration: 5,
                                   sourceStart: 0,
                                   sourceFile: file,
                                 };
@@ -951,7 +955,18 @@ export default function App(): React.JSX.Element {
                                    setHistoryIndex(prev => Math.min(prev + 1, 49));
                                    return newTracks;
                                 });
-                              };
+
+                                const videoElement = document.createElement('video');
+                                videoElement.src = `file://${file}`;
+                                videoElement.onloadedmetadata = () => {
+                                  const dur = videoElement.duration;
+                                  if (dur > 0 && !isNaN(dur)) {
+                                    setTotalDuration(prevDur => dur + newTime > prevDur ? dur + newTime + 10 : prevDur);
+                                    setTracks(prev => prev.map(t => t.id === track.id ? {
+                                      ...t, clips: t.clips.map(c => c.id === newVideoClip.id ? { ...c, duration: dur } : c)
+                                    } : t));
+                                  }
+                                };
                             } else if (effect || transition || textPreset) {
                                const newItemType = effect ? 'effect' : transition ? 'effect' : 'text';
                                const newItemName = effect || transition || textPreset;

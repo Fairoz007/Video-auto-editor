@@ -363,6 +363,189 @@ async def get_status(job_id: str):
         print(f"[LOG] Status check {job_id}: {data.get('status')} | Progress: {data.get('progress')}% | Metadata Count: {len(data.get('metadata_list', []))}")
     return data
 
+@app.post("/process-timeline")
+async def process_timeline(data: str = Form(...)):
+    payload = json.loads(data)
+    job_id = str(uuid.uuid4())
+    
+    progress_updates[job_id] = {"status": "started", "progress": 0, "metadata_list": [], "active_renders": {}}
+    
+    async def render_task():
+        try:
+            update_job_status(job_id, status="processing", message="Initializing FFmpeg timeline...", progress=5)
+            
+            tracks = payload.get("tracks", [])
+            res_str = payload.get("resolution", "1080x1920")
+            width, height = map(int, res_str.split('x'))
+            fps = payload.get("fps", 60)
+            target_duration = payload.get("duration", 10)
+            
+            video_track = next((t for t in tracks if t["type"] == "video"), None)
+            effect_track = next((t for t in tracks if t["type"] == "effect"), None)
+            text_track = next((t for t in tracks if t["type"] == "text"), None)
+            
+            video_clips = sorted(video_track["clips"], key=lambda c: c["start"]) if video_track else []
+            effect_clips = effect_track["clips"] if effect_track else []
+            text_clips = text_track["clips"] if text_track else []
+            
+            # Find LUT
+            lut_clip = next((c for c in effect_clips if c.get("lutPath")), None)
+            lut_path = lut_clip["lutPath"] if lut_clip else None
+            
+            # Find Transition
+            trans_clip = next((c for c in effect_clips if not c.get("lutPath")), None)
+            transition = trans_clip["name"] if trans_clip else None
+            # Map NLE transition names to FFmpeg xfade names
+            trans_map = {"Cross Dissolve": "fade", "Dip to Black": "fadeblack", "Wipe": "wipeleft", "Slide": "slideleft", "Zoom": "zoomin", "Spin": "radial", "Glitch": "pixelize"}
+            ff_trans = trans_map.get(transition, "fade") if transition else "fade"
+            
+            output_filename = f"export_{job_id[:8]}.mp4"
+            output_path = os.path.join(OUTPUT_DIR, output_filename)
+            
+            inputs = []
+            filter_chains = []
+            
+            v_streams = []
+            a_streams = []
+            
+            has_gpu = check_gpu()
+            
+            if not video_clips:
+                raise Exception("No video clips on timeline")
+                
+            update_job_status(job_id, status="processing", message="Building filtergraph...", progress=15)
+            
+            for i, c in enumerate(video_clips):
+                inputs.extend([
+                    "-ss", str(c["sourceStart"]),
+                    "-t", str(c["duration"]),
+                    "-i", c["sourceFile"]
+                ])
+                
+                scale_expr = f"scale={width}:{height}:force_original_aspect_ratio=increase"
+                crop_expr = f"crop={width}:{height}:(iw-{width})/2:(ih-{height})/2"
+                lut_expr = ""
+                if lut_path:
+                    safe_lut_path = lut_path.replace("\\", "/").replace(":", "\\:")
+                    lut_expr = f",lut3d=file='{safe_lut_path}'"
+                    
+                filter_chains.append(f"[{i}:v]{scale_expr},{crop_expr}{lut_expr},setpts=PTS-STARTPTS,format=yuv420p[v{i}];[{i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a{i}]")
+                v_streams.append(f"[v{i}]")
+                a_streams.append(f"[a{i}]")
+                
+            update_job_status(job_id, status="processing", message="Applying transitions...", progress=25)
+            
+            if len(video_clips) > 1 and transition:
+                # Xfade chaining
+                curr_v = v_streams[0]
+                curr_a = a_streams[0]
+                fade_dur = 1.0
+                
+                for i in range(1, len(video_clips)):
+                    next_v = v_streams[i]
+                    next_a = a_streams[i]
+                    
+                    # Offset is start of next clip
+                    offset = video_clips[i]["start"]
+                    
+                    filter_chains.append(f"{curr_v}{next_v}xfade=transition={ff_trans}:duration={fade_dur}:offset={offset}[xv{i}];{curr_a}{next_a}acrossfade=d={fade_dur}[xa{i}]")
+                    curr_v = f"[xv{i}]"
+                    curr_a = f"[xa{i}]"
+                
+                final_v = curr_v
+                final_a = curr_a
+            else:
+                concat_v = "".join(v_streams)
+                concat_a = "".join(a_streams)
+                filter_chains.append(f"{concat_v}concat=n={len(video_clips)}:v=1:a=0[conc_v]")
+                filter_chains.append(f"{concat_a}concat=n={len(video_clips)}:v=0:a=1[conc_a]")
+                final_v = "[conc_v]"
+                final_a = "[conc_a]"
+                
+            update_job_status(job_id, status="processing", message="Applying text...", progress=35)
+                
+            # Text overlay (Drawtext)
+            curr_v_text = final_v
+            drawtext_filters = []
+            for t_idx, txt in enumerate(text_clips):
+                text_content = txt.get("text", "TEXT")
+                safe_text = text_content.replace("'", "\\'").replace(":", "\\:")
+                start_t = txt["start"]
+                end_t = start_t + txt["duration"]
+                
+                font_file = FONT_PATH.replace("\\", "/")
+                
+                # Default drawtext values if color/stroke is not provided
+                color = payload.get("textColor", "#FFFFFF").replace("#", "0x")
+                stroke = payload.get("strokeColor", "#000000").replace("#", "0x")
+                shadow = payload.get("textShadowColor", "#000000").replace("#", "0x")
+                borderw = payload.get("strokeWidth", 4)
+                
+                dt = f"drawtext=fontfile='{font_file}':text='{safe_text}':fontcolor={color}:fontsize=120:x=(w-text_w)/2:y=(h-text_h)/2:bordercolor={stroke}:borderw={borderw}:shadowcolor={shadow}:shadowx=5:shadowy=5:enable='between(t,{start_t},{end_t})'"
+                drawtext_filters.append(dt)
+            
+            if drawtext_filters:
+                dt_chain = ",".join(drawtext_filters)
+                filter_chains.append(f"{curr_v_text},{dt_chain}[outv]")
+            else:
+                filter_chains.append(f"{curr_v_text}copy[outv]")
+                
+            filter_chains.append(f"{final_a}copy[outa]")
+                
+            filter_complex = ";".join(filter_chains)
+            
+            cmd = [
+                "ffmpeg", "-y",
+                *inputs,
+                "-filter_complex", filter_complex,
+                "-map", "[outv]",
+                "-map", "[outa]"
+            ]
+            
+            if has_gpu:
+                cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20", "-b:v", "10M"])
+            else:
+                cmd.extend(["-c:v", "libx264", "-preset", "fast", "-crf", "20"])
+                
+            cmd.extend(["-c:a", "aac", "-b:a", "192k", "-t", str(target_duration), output_path])
+            
+            update_job_status(job_id, status="processing", message="Rendering video...", progress=45)
+            
+            # Run ffmpeg
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            # Simple progress simulation since ffmpeg output parsing is complex
+            import time
+            start_time = time.time()
+            render_duration = target_duration * 0.5 # rough estimate
+            
+            while process.returncode is None:
+                elapsed = time.time() - start_time
+                prog = min(95, 45 + int((elapsed / render_duration) * 50))
+                update_job_status(job_id, progress=prog)
+                await asyncio.sleep(1.0)
+                if process.returncode is not None:
+                    break
+                    
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                print(stderr.decode())
+                raise Exception(f"FFmpeg failed with code {process.returncode}")
+                
+            update_job_status(job_id, status="completed", progress=100, message="Export Successful!")
+            
+        except Exception as e:
+            print(f"[ERROR] Process timeline failed: {str(e)}")
+            update_job_status(job_id, status="error", message=str(e))
+            
+    asyncio.create_task(render_task())
+    return {"status": "started", "job_id": job_id}
+
 from scenedetect import detect, AdaptiveDetector, split_video_ffmpeg
 import whisper
 
