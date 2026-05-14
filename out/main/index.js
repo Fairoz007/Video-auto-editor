@@ -28,7 +28,7 @@ function createWindow() {
     show: false,
     autoHideMenuBar: true,
     titleBarStyle: "hiddenInset",
-    ...process.platform === "linux" ? { icon } : {},
+    icon,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       sandbox: false,
@@ -36,6 +36,9 @@ function createWindow() {
       webSecurity: false
     }
   });
+  if (process.platform === "darwin") {
+    electron.app.dock.setIcon(icon);
+  }
   mainWindow.on("ready-to-show", () => {
     mainWindow.show();
   });

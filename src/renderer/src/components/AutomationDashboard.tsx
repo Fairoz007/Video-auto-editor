@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { CheckCircle2, Clock, Play, Youtube, Instagram, MessageSquare, Zap } from 'lucide-react'
+import { CheckCircle2, Clock, Play, Youtube, Instagram, MessageSquare, Zap, Settings } from 'lucide-react'
 
 export default function AutomationDashboard() {
   const tasks = [
@@ -137,5 +138,3 @@ function StatCard({ label, value, icon }) {
   )
 }
 
-import { Settings } from 'lucide-react'
-import { useState } from 'react'

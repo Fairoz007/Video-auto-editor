@@ -326,7 +326,10 @@ export default function App(): React.JSX.Element {
       }
       
       const targetTime = activeClip.sourceStart + (currentTime - activeClip.start);
-      if (Math.abs(videoRef.current.currentTime - targetTime) > 0.15) {
+      const drift = Math.abs(videoRef.current.currentTime - targetTime);
+      if (!isPlaying && drift > 0.05) {
+        videoRef.current.currentTime = targetTime;
+      } else if (isPlaying && drift > 0.5) {
         videoRef.current.currentTime = targetTime;
       }
       
