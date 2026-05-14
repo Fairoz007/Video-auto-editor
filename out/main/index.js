@@ -32,7 +32,8 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       sandbox: false,
-      contextIsolation: true
+      contextIsolation: true,
+      webSecurity: false
     }
   });
   mainWindow.on("ready-to-show", () => {
@@ -74,6 +75,50 @@ electron.app.whenReady().then(() => {
       totalmem: os.totalmem(),
       cpus: os.cpus()
     };
+  });
+  electron.ipcMain.handle("run-upload", async () => {
+    return new Promise((resolve) => {
+      const uploadProcess = child_process.spawn("node", ["upload.js"], {
+        cwd: electron.app.getAppPath()
+      });
+      let output = "";
+      uploadProcess.stdout.on("data", (data) => output += data.toString());
+      uploadProcess.stderr.on("data", (data) => output += data.toString());
+      uploadProcess.on("close", (code) => {
+        if (code === 0) resolve({ success: true, output });
+        else resolve({ success: false, output });
+      });
+    });
+  });
+  electron.ipcMain.handle("run-python", async (_, { script, args }) => {
+    return new Promise((resolve) => {
+      const pythonPath = process.platform === "win32" ? "python" : "python3";
+      console.log(`Executing: ${pythonPath} ${script} ${args.join(" ")}`);
+      const processObj = child_process.spawn(pythonPath, [script, ...args], {
+        cwd: electron.app.getAppPath(),
+        env: { ...process.env, PYTHONIOENCODING: "utf-8" }
+      });
+      let output = "";
+      processObj.stdout.on("data", (data) => {
+        const text = data.toString();
+        output += text;
+        console.log(`[Python ${script}] ${text.trim()}`);
+      });
+      processObj.stderr.on("data", (data) => {
+        const text = data.toString();
+        output += text;
+        console.error(`[Python ${script}] ${text.trim()}`);
+      });
+      processObj.on("close", (code) => {
+        console.log(`[Python ${script}] Exited with code ${code}`);
+        if (code === 0) resolve({ success: true, output });
+        else resolve({ success: false, output });
+      });
+      processObj.on("error", (err) => {
+        console.error(`[Python ${script}] Failed to start:`, err);
+        resolve({ success: false, output: err.message });
+      });
+    });
   });
   createWindow();
   electron.app.on("activate", function() {

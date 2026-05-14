@@ -38,7 +38,8 @@ function createWindow(): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
-      contextIsolation: true
+      contextIsolation: true,
+      webSecurity: false
     }
   })
 
@@ -94,7 +95,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('run-upload', async () => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const uploadProcess = spawn('node', ['upload.js'], {
         cwd: app.getAppPath()
       })

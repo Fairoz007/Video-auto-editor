@@ -1,14 +1,13 @@
-import { useState, useEffect, cloneElement } from 'react'
+import { useState, useEffect, cloneElement, useRef } from 'react'
 import { 
   Play, Pause, SkipBack, SkipForward, 
-  Plus, Settings, Layout, Layers, 
-  Share2, Zap, Brain, Video, 
-  Search, Bell, Maximize2, Image,
+  Plus, Settings, 
+  Zap, Video, 
+  Maximize2, Image,
   Home, Type, Sparkles, SlidersHorizontal, Music, MessageSquare, Upload,
-  Undo, Redo, Scissors, Trash2, Copy, Eye, ZoomIn, ZoomOut, CheckCircle2, ChevronDown, AlignLeft, AlignCenter, AlignRight, List,
+  Undo, Redo, Scissors, Trash2, Copy, CheckCircle2, ChevronDown, AlignLeft, AlignCenter, AlignRight, List,
   Mic, Crosshair, ChevronRight, Download, Loader2
 } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
 import clsx from 'clsx'
 import AutomationDashboard from './components/AutomationDashboard'
 
@@ -16,6 +15,11 @@ export default function App(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
+  
+  // Video Player State
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
   
   // Settings State
   const [topText, setTopText] = useState("MY EPIC MOMENTS")
@@ -91,6 +95,10 @@ export default function App(): React.JSX.Element {
       const file = await window.api.selectFile()
       if (file) {
         setSelectedFile(file)
+        if (videoRef.current) {
+          videoRef.current.src = `file://${file}`
+          videoRef.current.load()
+        }
         if (autoCut) {
           setIsAnalyzing(true)
           try {
@@ -114,6 +122,41 @@ export default function App(): React.JSX.Element {
       }
     } catch (e) {
       console.error(e)
+    }
+  }
+
+  const togglePlay = () => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.pause()
+      } else {
+        videoRef.current.play()
+      }
+      setIsPlaying(!isPlaying)
+    }
+  }
+
+  const handleTimeUpdate = () => {
+    if (videoRef.current) {
+      setCurrentTime(videoRef.current.currentTime)
+    }
+  }
+
+  const formatTime = (time: number) => {
+    const mins = Math.floor(time / 60)
+    const secs = Math.floor(time % 60)
+    const ms = Math.floor((time * 100) % 100)
+    return `00:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${ms.toString().padStart(2, '0')}`
+  }
+
+  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (videoRef.current && totalDuration > 0) {
+      const rect = e.currentTarget.getBoundingClientRect()
+      const clickX = e.clientX - rect.left
+      const percent = clickX / rect.width
+      const newTime = percent * totalDuration
+      videoRef.current.currentTime = newTime
+      setCurrentTime(newTime)
     }
   }
 
@@ -212,6 +255,8 @@ export default function App(): React.JSX.Element {
             <SidebarItem icon={<Zap />} label="Automation" active={activeTab === 'automation'} onClick={() => setActiveTab('automation')} />
             <SidebarItem icon={<Settings />} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
           </nav>
+
+
 
           {/* Bottom Left: Project Details */}
           <div className="p-4 border-t border-[#262630] space-y-3 bg-[#0d0d12]">
@@ -336,7 +381,18 @@ export default function App(): React.JSX.Element {
                    <div className="flex-1 bg-[#0d0d12] flex flex-col items-center justify-center p-6 relative">
                      {/* Video Area */}
                      <div className="relative aspect-[9/16] h-full max-h-[650px] bg-black rounded-sm shadow-2xl overflow-hidden border border-white/5 group">
-                       <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/80 to-transparent">
+                       {selectedFile && (
+                         <video 
+                           ref={videoRef}
+                           className="absolute inset-0 w-full h-full object-contain z-0"
+                           onTimeUpdate={handleTimeUpdate}
+                           onEnded={() => setIsPlaying(false)}
+                           onLoadedMetadata={() => {
+                             if (videoRef.current) setTotalDuration(videoRef.current.duration)
+                           }}
+                         />
+                       )}
+                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
                           <div className="text-center font-['Bebas_Neue']" style={{ 
                               WebkitTextStroke: `${strokeWidth}px ${strokeColor}`
                            }}>
@@ -352,13 +408,15 @@ export default function App(): React.JSX.Element {
                      </div>
                  
                  {/* Player Controls */}
-                 <div className="absolute bottom-4 left-0 right-0 flex flex-col items-center">
+                 <div className="absolute bottom-4 left-0 right-0 flex flex-col items-center z-20 bg-[#0d0d12]/80 backdrop-blur py-2">
                     <div className="flex items-center justify-center space-x-6">
-                      <span className="text-[10px] font-mono text-brand-400">00:00:15:12 <span className="text-white/40">/ 00:01:00:00</span></span>
+                      <span className="text-[10px] font-mono text-brand-400">{formatTime(currentTime)} <span className="text-white/40">/ {formatTime(totalDuration)}</span></span>
                       
                       <div className="flex items-center space-x-4">
                         <button className="text-white/60 hover:text-white transition-colors"><SkipBack className="w-4 h-4 fill-current" /></button>
-                        <button className="text-white/60 hover:text-white transition-colors"><Play className="w-4 h-4 fill-current" /></button>
+                        <button onClick={togglePlay} className="text-white/60 hover:text-white transition-colors">
+                          {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                        </button>
                         <button className="text-white/60 hover:text-white transition-colors"><SkipForward className="w-4 h-4 fill-current" /></button>
                       </div>
 
@@ -520,9 +578,11 @@ export default function App(): React.JSX.Element {
 
             {/* Tracks Area */}
             <div className="flex-1 overflow-y-auto relative bg-[#0d0d12]">
-               <div className="absolute top-0 bottom-0 left-[35%] w-px bg-danger-500 z-20 pointer-events-none">
-                 <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-danger-500 rounded-[2px] rotate-45"></div>
-                 <div className="absolute top-full -mt-2 -left-1.5 w-3 h-3 bg-danger-500 rounded-sm"></div>
+               {/* Playhead Guide */}
+               <div className="absolute top-0 bottom-0 w-px bg-brand-500 z-50 pointer-events-none transition-all duration-100 ease-linear"
+                 style={{ left: `calc(5% + ${totalDuration > 0 ? (currentTime / totalDuration) * 75 : 0}%)` }}
+               >
+                 <div className="absolute -top-2 -translate-x-1/2 w-3 h-3 rounded-sm bg-brand-500 rotate-45"></div>
                </div>
 
                <div className="space-y-[2px] pt-2">
@@ -533,7 +593,7 @@ export default function App(): React.JSX.Element {
                  </TrackRow>
                  
                  <TrackRow label="Video Track" icon={<Video />}>
-                   <div className="absolute left-[5%] right-[20%] h-12 flex">
+                   <div className="absolute left-[5%] right-[20%] h-12 flex relative cursor-pointer" onClick={handleTimelineClick}>
                       {scenes.length > 0 ? (
                         scenes.map((scene, i) => {
                           const widthPercent = (scene.duration / totalDuration) * 100

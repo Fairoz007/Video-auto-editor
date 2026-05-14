@@ -4,7 +4,9 @@ const preload = require("@electron-toolkit/preload");
 const api = {
   selectFile: () => electron.ipcRenderer.invoke("select-file"),
   selectFolder: () => electron.ipcRenderer.invoke("select-folder"),
-  osStats: () => electron.ipcRenderer.invoke("os-stats")
+  osStats: () => electron.ipcRenderer.invoke("os-stats"),
+  runUpload: () => electron.ipcRenderer.invoke("run-upload"),
+  runPython: (script, args) => electron.ipcRenderer.invoke("run-python", { script, args })
 };
 if (process.contextIsolated) {
   try {
