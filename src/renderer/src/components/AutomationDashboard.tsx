@@ -29,6 +29,21 @@ export default function AutomationDashboard() {
     }
   }
 
+  const handleGenerate = async (script) => {
+    setUploadStatus(`Running ${script}...`)
+    try {
+      // @ts-ignore
+      const res = await window.api.runPython(script, [])
+      if (res.success) {
+        setUploadStatus(`Generated successfully!`)
+      } else {
+        setUploadStatus(`Generation failed.`)
+      }
+    } catch (e) {
+      setUploadStatus(`Error running ${script}.`)
+    }
+  }
+
   return (
     <div className="p-8 space-y-8 h-full overflow-y-auto">
       <div className="flex justify-between items-end">
@@ -38,6 +53,18 @@ export default function AutomationDashboard() {
         </div>
         <div className="flex space-x-3 items-center">
           {uploadStatus && <span className="text-xs text-white/50">{uploadStatus}</span>}
+          <button 
+            onClick={() => handleGenerate('generate_titles.py')}
+            className="px-4 py-2 bg-[#1f1f26] border border-[#262630] rounded-lg text-sm font-medium hover:bg-brand-500 hover:border-brand-500 transition-colors"
+          >
+            Generate Titles
+          </button>
+          <button 
+            onClick={() => handleGenerate('generate_descriptions.py')}
+            className="px-4 py-2 bg-[#1f1f26] border border-[#262630] rounded-lg text-sm font-medium hover:bg-brand-500 hover:border-brand-500 transition-colors"
+          >
+            Generate Descriptions
+          </button>
           <button 
             onClick={handleUpload}
             disabled={isUploading}

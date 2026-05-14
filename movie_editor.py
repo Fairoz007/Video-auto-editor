@@ -191,6 +191,7 @@ def main():
     parser.add_argument("--resume", action="store_true", help="Resume from the last stopped edit")
     parser.add_argument("--bass", action="store_true", help="Enable bass boost to help avoid copyright issues")
     parser.add_argument("--part", type=int, required=False, default=0, help="Part number to start from (e.g. if you say 140, it starts from 141)")
+    parser.add_argument("--input", type=str, required=False, default="Movies", help="Input folder or file")
     args = parser.parse_args()
 
     width, height = map(int, args.resolution.lower().split('x'))
@@ -198,16 +199,19 @@ def main():
     base_title_text = args.title
     start_seconds = parse_time_to_seconds(args.start)
 
-    input_folder = "Movies"
+    input_path = args.input
     output_folder = "OUTPUTY"
 
-    os.makedirs(input_folder, exist_ok=True)
     os.makedirs(output_folder, exist_ok=True)
 
     video_files = []
-    for ext in ["*.mp4", "*.mov", "*.avi", "*.mkv"]:
-        video_files.extend(glob.glob(os.path.join(input_folder, ext)))
-        video_files.extend(glob.glob(os.path.join(input_folder, ext.upper())))
+    if os.path.isfile(input_path):
+        video_files.append(input_path)
+    else:
+        os.makedirs(input_path, exist_ok=True)
+        for ext in ["*.mp4", "*.mov", "*.avi", "*.mkv"]:
+            video_files.extend(glob.glob(os.path.join(input_path, ext)))
+            video_files.extend(glob.glob(os.path.join(input_path, ext.upper())))
     
     # Remove duplicates caused by case-insensitive filesystems
     unique_files = {}

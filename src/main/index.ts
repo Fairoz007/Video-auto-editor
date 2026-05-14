@@ -110,6 +110,41 @@ app.whenReady().then(() => {
     })
   })
 
+  ipcMain.handle('run-python', async (_, { script, args }) => {
+    return new Promise((resolve) => {
+      const pythonPath = process.platform === 'win32' ? 'python' : 'python3'
+      console.log(`Executing: ${pythonPath} ${script} ${args.join(' ')}`)
+      
+      const processObj = spawn(pythonPath, [script, ...args], {
+        cwd: app.getAppPath(),
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
+      })
+      
+      let output = ''
+      processObj.stdout.on('data', (data) => {
+        const text = data.toString()
+        output += text
+        console.log(`[Python ${script}] ${text.trim()}`)
+      })
+      processObj.stderr.on('data', (data) => {
+        const text = data.toString()
+        output += text
+        console.error(`[Python ${script}] ${text.trim()}`)
+      })
+      
+      processObj.on('close', (code) => {
+        console.log(`[Python ${script}] Exited with code ${code}`)
+        if (code === 0) resolve({ success: true, output })
+        else resolve({ success: false, output })
+      })
+      
+      processObj.on('error', (err) => {
+        console.error(`[Python ${script}] Failed to start:`, err)
+        resolve({ success: false, output: err.message })
+      })
+    })
+  })
+
   createWindow()
 
   app.on('activate', function () {

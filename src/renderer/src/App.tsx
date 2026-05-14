@@ -26,6 +26,8 @@ export default function App(): React.JSX.Element {
   const [fps, setFps] = useState(60)
   const [autoCut, setAutoCut] = useState(true)
   const [useGpu, setUseGpu] = useState(true)
+  const [scriptMode, setScriptMode] = useState('autoedit')
+  const [videoDuration, setVideoDuration] = useState(60)
   
   // Scenes State
   const [scenes, setScenes] = useState<any[]>([])
@@ -116,41 +118,34 @@ export default function App(): React.JSX.Element {
   }
 
   const handleRender = async () => {
-    if (!selectedFile) return
     setIsProcessing(true)
     try {
-      const response = await fetch('http://localhost:8000/process', {
-        method: 'POST',
-        body: new URLSearchParams({
-          data: JSON.stringify({
-            file_path: selectedFile,
-            config: {
-              width: 1080,
-              height: 1920,
-              topText: topText,
-              bottomText: "",
-              fontSize: fontSize,
-              textColor: textColor,
-              strokeColor: strokeColor,
-              strokeWidth: strokeWidth,
-              zoomStart: 1.0,
-              zoomEnd: 1.2,
-              fps: fps,
-              useGpu: useGpu,
-              splitLength: autoCut ? 60 : 0
-            }
-          })
-        })
-      })
-      const data = await response.json()
-      if (data.job_id) {
+      let script = 'autoedit.py'
+      if (scriptMode === 'movie') script = 'movie_editor.py'
+      if (scriptMode === 'shorts') script = 'shorts_editor.py'
+      const args = [
+        '--title', topText,
+        '--seconds', videoDuration.toString(),
+        '--resolution', '1080x1920'
+      ]
+      
+      if (selectedFile) {
+        args.push('--input', selectedFile)
+      }
+
+      // @ts-ignore
+      const res = await window.api.runPython(script, args)
+      
+      if (res.success) {
         setRenderTasks(prev => [...prev, {
-          id: data.job_id,
-          title: selectedFile.split(/[\/]/).pop() || "Render Job",
-          details: `1080x1920 | ${fps}fps`,
-          status: "Queued",
-          progress: 0
+          id: Math.random().toString(36).substring(7),
+          title: script,
+          details: `Completed successfully`,
+          status: "Completed",
+          progress: 100
         }])
+      } else {
+        console.error('Script failed:', res.output)
       }
     } catch (error) {
       console.error('Render failed:', error)
@@ -158,6 +153,7 @@ export default function App(): React.JSX.Element {
       setIsProcessing(false)
     }
   }
+
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#0d0d12] text-foreground font-sans overflow-hidden select-none">
@@ -179,10 +175,10 @@ export default function App(): React.JSX.Element {
         <div className="flex items-center space-x-4 window-no-drag">
            <button 
              onClick={handleRender} 
-             disabled={!selectedFile || isProcessing}
+             disabled={isProcessing}
              className={clsx(
                "px-3 py-1 text-[10px] font-bold rounded uppercase tracking-wider flex items-center space-x-1.5 transition-colors",
-               selectedFile && !isProcessing && !isAnalyzing ? "bg-brand-500 text-white hover:bg-brand-600" : "bg-[#1f1f26] text-white/30 cursor-not-allowed"
+               !isProcessing && !isAnalyzing ? "bg-brand-500 text-white hover:bg-brand-600" : "bg-[#1f1f26] text-white/30 cursor-not-allowed"
              )}
            >
              {(isProcessing || isAnalyzing) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
@@ -395,7 +391,15 @@ export default function App(): React.JSX.Element {
                 {/* Project Settings */}
                 <div>
                   <h3 className="text-xs font-medium text-white mb-3">Project Settings</h3>
-                  <div className="space-y-2">
+                   <div className="space-y-2">
+                     <div className="flex items-center justify-between">
+                       <span className="text-[10px] text-white/50">Script Mode</span>
+                       <select value={scriptMode} onChange={(e) => setScriptMode(e.target.value)} className="bg-[#1f1f26] border border-[#262630] rounded text-xs text-white/90 px-2 py-1 outline-none">
+                         <option value="autoedit">Auto Edit Shorts</option>
+                         <option value="movie">Movie Editor</option>
+                         <option value="shorts">Legacy Shorts Editor</option>
+                       </select>
+                     </div>
                      <PropRow label="Resolution" value="1080x1920 (9:16)" />
                      <div className="flex items-center justify-between">
                        <span className="text-[10px] text-white/50">Frame Rate</span>
@@ -404,7 +408,10 @@ export default function App(): React.JSX.Element {
                          <option value={60}>60 FPS</option>
                        </select>
                      </div>
-                     <PropRow label="Duration" value="60 Seconds" />
+                     <div className="flex items-center justify-between">
+                       <span className="text-[10px] text-white/50">Duration (sec)</span>
+                       <input type="number" value={videoDuration} onChange={(e) => setVideoDuration(Number(e.target.value))} className="bg-[#1f1f26] border border-[#262630] rounded text-xs text-white/90 px-2 py-1 outline-none w-16 text-right" />
+                     </div>
                      <div className="pt-2 space-y-2">
                        <ToggleRow label="Auto Cut (Smart)" active={autoCut} onClick={() => setAutoCut(!autoCut)} />
                        <ToggleRow label="GPU Acceleration (NVENC)" active={useGpu} onClick={() => setUseGpu(!useGpu)} />

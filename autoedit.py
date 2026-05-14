@@ -146,22 +146,26 @@ def main():
     parser.add_argument("--title", type=str, required=False, default="VALORANT SHORTS", help="Title overlay text")
     parser.add_argument("--seconds", type=float, required=True, help="Duration of final videos")
     parser.add_argument("--resolution", type=str, required=True, help="Resolution e.g. 1080x1920")
+    parser.add_argument("--input", type=str, required=False, default="clip", help="Input folder or file")
     args = parser.parse_args()
 
     width, height = map(int, args.resolution.lower().split('x'))
     target_duration = args.seconds
     base_title_text = args.title
 
-    input_folder = "clip"
+    input_path = args.input
     output_folder = "OUTPUTY"
 
-    os.makedirs(input_folder, exist_ok=True)
     os.makedirs(output_folder, exist_ok=True)
 
     video_files = []
-    for ext in ["*.mp4", "*.mov", "*.avi", "*.mkv"]:
-        video_files.extend(glob.glob(os.path.join(input_folder, ext)))
-        video_files.extend(glob.glob(os.path.join(input_folder, ext.upper())))
+    if os.path.isfile(input_path):
+        video_files.append(input_path)
+    else:
+        os.makedirs(input_path, exist_ok=True)
+        for ext in ["*.mp4", "*.mov", "*.avi", "*.mkv"]:
+            video_files.extend(glob.glob(os.path.join(input_path, ext)))
+            video_files.extend(glob.glob(os.path.join(input_path, ext.upper())))
     
     # Remove duplicates caused by case-insensitive filesystems (e.g. Windows)
     unique_files = {}

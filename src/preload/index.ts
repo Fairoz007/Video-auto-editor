@@ -7,6 +7,7 @@ const api = {
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   osStats: () => ipcRenderer.invoke('os-stats'),
   runUpload: () => ipcRenderer.invoke('run-upload'),
+  runPython: (script, args) => ipcRenderer.invoke('run-python', { script, args }),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
