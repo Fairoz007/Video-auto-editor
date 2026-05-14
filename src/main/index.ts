@@ -146,6 +146,34 @@ app.whenReady().then(() => {
     })
   })
 
+  ipcMain.handle('scan-assets', async () => {
+    const fs = require('fs')
+    const path = require('path')
+    const assetsDir = path.join(app.getAppPath(), 'assets')
+    
+    const scanDir = (dirPath) => {
+      if (!fs.existsSync(dirPath)) return {}
+      const result = {}
+      const items = fs.readdirSync(dirPath, { withFileTypes: true })
+      for (const item of items) {
+        if (item.isDirectory()) {
+          result[item.name] = scanDir(path.join(dirPath, item.name))
+        } else {
+          if (!result['_files']) result['_files'] = []
+          result['_files'].push(item.name)
+        }
+      }
+      return result
+    }
+
+    return {
+      luts: scanDir(path.join(assetsDir, 'luts')),
+      transitions: scanDir(path.join(assetsDir, 'transitions')),
+      effects: scanDir(path.join(assetsDir, 'effects')),
+      path: assetsDir
+    }
+  })
+
   createWindow()
 
   app.on('activate', function () {

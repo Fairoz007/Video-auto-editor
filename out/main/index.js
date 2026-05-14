@@ -120,6 +120,31 @@ electron.app.whenReady().then(() => {
       });
     });
   });
+  electron.ipcMain.handle("scan-assets", async () => {
+    const fs = require("fs");
+    const path2 = require("path");
+    const assetsDir = path2.join(electron.app.getAppPath(), "assets");
+    const scanDir = (dirPath) => {
+      if (!fs.existsSync(dirPath)) return {};
+      const result = {};
+      const items = fs.readdirSync(dirPath, { withFileTypes: true });
+      for (const item of items) {
+        if (item.isDirectory()) {
+          result[item.name] = scanDir(path2.join(dirPath, item.name));
+        } else {
+          if (!result["_files"]) result["_files"] = [];
+          result["_files"].push(item.name);
+        }
+      }
+      return result;
+    };
+    return {
+      luts: scanDir(path2.join(assetsDir, "luts")),
+      transitions: scanDir(path2.join(assetsDir, "transitions")),
+      effects: scanDir(path2.join(assetsDir, "effects")),
+      path: assetsDir
+    };
+  });
   createWindow();
   electron.app.on("activate", function() {
     if (electron.BrowserWindow.getAllWindows().length === 0) createWindow();

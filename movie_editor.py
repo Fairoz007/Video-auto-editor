@@ -91,7 +91,7 @@ def check_gpu():
     except:
         return False
 
-def render_output(clips_info, width, height, title_text, title_img_path, output_folder, output_idx, target_duration, bass_boost=False):
+def render_output(clips_info, width, height, title_text, title_img_path, output_folder, output_idx, target_duration, bass_boost=False, lut_path=None, transition_type=None):
     print(f"\n--- Rendering Output {output_idx} using GPU ---")
     safe_title = "".join(c for c in title_text if c not in r'<>:"/\|?*').strip()
     output_path = os.path.join(output_folder, f"{safe_title}.mp4")
@@ -119,7 +119,13 @@ def render_output(clips_info, width, height, title_text, title_img_path, output_
             # Boost low frequencies (60Hz) by 10dB and normalize volume slightly to prevent clipping
             audio_filters += ",equalizer=f=60:width_type=h:w=50:g=10,volume=0.9"
             
-        filter_chains.append(f"[{i}:v]{scale_expr},{crop_expr},setpts=PTS-STARTPTS,format=yuv420p[v{i}];[{i}:a]{audio_filters}[a{i}]")
+        lut_expr = ""
+        if lut_path:
+            # Escape path for FFmpeg filter
+            safe_lut_path = lut_path.replace("\\", "/").replace(":", "\\:")
+            lut_expr = f",lut3d=file='{safe_lut_path}'"
+        
+        filter_chains.append(f"[{i}:v]{scale_expr},{crop_expr}{lut_expr},setpts=PTS-STARTPTS,format=yuv420p[v{i}];[{i}:a]{audio_filters}[a{i}]")
         concat_v += f"[v{i}][a{i}]"
         
     # Add the title overlay image
@@ -192,6 +198,8 @@ def main():
     parser.add_argument("--bass", action="store_true", help="Enable bass boost to help avoid copyright issues")
     parser.add_argument("--part", type=int, required=False, default=0, help="Part number to start from (e.g. if you say 140, it starts from 141)")
     parser.add_argument("--input", type=str, required=False, default="Movies", help="Input folder or file")
+    parser.add_argument("--lut", type=str, required=False, default=None, help="Path to LUT .cube file")
+    parser.add_argument("--transition", type=str, required=False, default=None, help="Transition type for xfade")
     args = parser.parse_args()
 
     width, height = map(int, args.resolution.lower().split('x'))
@@ -292,7 +300,7 @@ def main():
             # Create text image with the overlay text (just "Part X"), with a slightly larger font since it's short
             create_text_image(overlay_text, width, int(height * 0.25), font_size=int(width * 0.12), output_path=title_img_path)
             
-            render_output(current_clips, width, height, file_title, title_img_path, output_folder, output_idx, target_duration, bass_boost=args.bass)
+            render_output(current_clips, width, height, file_title, title_img_path, output_folder, output_idx, target_duration, bass_boost=args.bass, lut_path=args.lut, transition_type=args.transition)
             
             if os.path.exists(title_img_path):
                 os.remove(title_img_path)

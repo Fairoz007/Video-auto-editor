@@ -8,6 +8,7 @@ const api = {
   osStats: () => ipcRenderer.invoke('os-stats'),
   runUpload: () => ipcRenderer.invoke('run-upload'),
   runPython: (script, args) => ipcRenderer.invoke('run-python', { script, args }),
+  scanAssets: () => ipcRenderer.invoke('scan-assets'),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

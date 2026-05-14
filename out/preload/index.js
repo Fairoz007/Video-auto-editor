@@ -6,7 +6,8 @@ const api = {
   selectFolder: () => electron.ipcRenderer.invoke("select-folder"),
   osStats: () => electron.ipcRenderer.invoke("os-stats"),
   runUpload: () => electron.ipcRenderer.invoke("run-upload"),
-  runPython: (script, args) => electron.ipcRenderer.invoke("run-python", { script, args })
+  runPython: (script, args) => electron.ipcRenderer.invoke("run-python", { script, args }),
+  scanAssets: () => electron.ipcRenderer.invoke("scan-assets")
 };
 if (process.contextIsolated) {
   try {

@@ -11,6 +11,10 @@ import {
 import clsx from 'clsx'
 import AutomationDashboard from './components/AutomationDashboard'
 import AutoEditDashboard from './components/AutoEditDashboard'
+import DashboardPanel from './components/panels/DashboardPanel'
+import ExportPanel from './components/panels/ExportPanel'
+import UploadPanel from './components/panels/UploadPanel'
+import LeftToolPanel from './components/panels/LeftToolPanel'
 
 type TrackType = 'video' | 'audio' | 'text' | 'effect';
 
@@ -38,6 +42,21 @@ export default function App(): React.JSX.Element {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [mediaFiles, setMediaFiles] = useState<string[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
+  const [assets, setAssets] = useState<any>({ luts: {}, transitions: {}, effects: {} })
+
+  useEffect(() => {
+    const fetchAssets = async () => {
+      // @ts-ignore
+      if (window.api && window.api.scanAssets) {
+        try {
+          // @ts-ignore
+          const res = await window.api.scanAssets();
+          setAssets(res);
+        } catch (e) { console.error("Failed to load assets", e); }
+      }
+    };
+    fetchAssets();
+  }, []);
   
   // Video Player State
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -473,6 +492,22 @@ export default function App(): React.JSX.Element {
       if (selectedFile) {
         args.push('--input', selectedFile)
       }
+      
+      const effectTrack = tracks.find(t => t.type === 'effect');
+      if (effectTrack) {
+        // @ts-ignore
+        const activeLutClip = effectTrack.clips.find(c => c.lutPath);
+        if (activeLutClip) {
+           // @ts-ignore
+           args.push('--lut', activeLutClip.lutPath);
+        }
+        
+        // Find if there's a transition dropped (simplified logic: just pick the first transition)
+        const transitionClip = effectTrack.clips.find(c => c.name !== activeLutClip?.name);
+        if (transitionClip && !activeLutClip) {
+           args.push('--transition', transitionClip.name);
+        }
+      }
 
       // @ts-ignore
       if (window.api && window.api.runPython) {
@@ -553,7 +588,7 @@ export default function App(): React.JSX.Element {
             <SidebarItem icon={<Home />} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} isBrand />
             <SidebarItem icon={<ImageIcon />} label="Media" active={activeTab === 'media'} onClick={() => setActiveTab('media')} />
             <SidebarItem icon={<Scissors />} label="Edit" active={activeTab === 'edit'} onClick={() => setActiveTab('edit')} />
-            <SidebarItem icon={<Video />} label="Auto Edit" active={activeTab === 'auto-edit'} onClick={() => setActiveTab('auto-edit')} />
+            <SidebarItem icon={<Zap />} label="Quick Edit" active={activeTab === 'quick-edit'} onClick={() => setActiveTab('quick-edit')} />
             <SidebarItem icon={<Type />} label="Text / Overlays" active={activeTab === 'text'} onClick={() => setActiveTab('text')} />
             <SidebarItem icon={<Sparkles />} label="Effects" active={activeTab === 'effects'} onClick={() => setActiveTab('effects')} />
             <SidebarItem icon={<SlidersHorizontal />} label="Transitions" active={activeTab === 'transitions'} onClick={() => setActiveTab('transitions')} />
@@ -598,62 +633,26 @@ export default function App(): React.JSX.Element {
              <AutomationDashboard />
           ) : activeTab === 'auto-edit' ? (
              <AutoEditDashboard />
+          ) : activeTab === 'dashboard' ? (
+             <DashboardPanel sysStats={sysStats} />
+          ) : activeTab === 'export' ? (
+             <ExportPanel />
+          ) : activeTab === 'upload' ? (
+             <UploadPanel />
           ) : (
             <>
               {/* Top Center: Workspace */}
               <div className="flex-1 flex min-h-0">
                 
-                {/* Project Media Column */}
-                <div className="w-[300px] border-r border-[#262630] bg-[#141419] flex flex-col">
-                  <div className="p-4 flex items-center justify-between border-b border-[#262630]">
-                    <h2 className="text-sm font-semibold text-white">Project Media</h2>
-                    <div className="flex items-center space-x-2">
-                      <button onClick={handleSelectFile} className="flex items-center space-x-1 px-2 py-1 bg-[#262630] hover:bg-[#32323e] rounded text-xs transition-colors">
-                        <Download className="w-3 h-3 text-brand-400" />
-                        <span>Import</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex px-4 py-2 space-x-4 border-b border-[#262630]">
-                    <button className="text-xs font-medium text-brand-400 border-b-2 border-brand-400 pb-1">All</button>
-                    <button className="text-xs font-medium text-white/50 hover:text-white transition-colors pb-1">Videos</button>
-                    <button className="text-xs font-medium text-white/50 hover:text-white transition-colors pb-1">Audio</button>
-                  </div>
-
-                  <div className="flex-1 p-4 overflow-y-auto space-y-4">
-                    {/* Dropzone */}
-                    <div onClick={handleSelectFile} className="border-2 border-dashed border-[#262630] hover:border-brand-500/50 rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-colors bg-[#1f1f26]/50 group">
-                      <Upload className="w-6 h-6 text-brand-400 mb-2 group-hover:scale-110 transition-transform" />
-                      <p className="text-xs text-white/80">Drag & Drop Files Here</p>
-                      <p className="text-[10px] text-white/40 mt-1">or click to import</p>
-                    </div>
-
-                    {/* Grid */}
-                    <div className="grid grid-cols-2 gap-3">
-                      {mediaFiles.map((file) => (
-                        <div 
-                          key={file}
-                          draggable
-                          onDragStart={(e) => {
-                             e.dataTransfer.setData('mediaPath', file);
-                             e.dataTransfer.effectAllowed = 'copy';
-                          }}
-                          className={clsx("group relative rounded-lg overflow-hidden border cursor-grab active:cursor-grabbing transition-colors col-span-2", selectedFile === file ? "border-brand-500" : "border-[#262630] hover:border-brand-500")}
-                          onClick={() => setSelectedFile(file)}
-                        >
-                           <video src={`file://${file}`} className="w-full aspect-video object-cover bg-black" />
-                           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
-                             <span className="text-[10px] font-semibold text-white px-2 py-1 bg-brand-500 rounded">Drag to Timeline</span>
-                           </div>
-                           <div className="absolute bottom-0 left-0 right-0 p-1.5 bg-gradient-to-t from-black/80 to-transparent pointer-events-none">
-                             <p className="text-[10px] text-white/90 truncate">{file.split('/').pop()}</p>
-                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                {/* Dynamic Left Tool Panel */}
+                <LeftToolPanel 
+                  activeTab={activeTab} 
+                  mediaFiles={mediaFiles} 
+                  selectedFile={selectedFile} 
+                  setSelectedFile={setSelectedFile} 
+                  handleSelectFile={handleSelectFile} 
+                  assets={assets}
+                />
 
                 {/* Video Player Column */}
                 <div className="flex-1 flex flex-col min-w-0 relative">
@@ -731,28 +730,90 @@ export default function App(): React.JSX.Element {
 
               <div className="flex-1 overflow-y-auto p-4 space-y-6">
                 {/* Text Overlay editor */}
-                {selectedClipId && tracks.find(t => t.type === 'text')?.clips.find(c => c.id === selectedClipId) ? (
-                  <div>
-                    <h3 className="text-xs font-medium text-white mb-3 flex items-center"><Type className="w-3.5 h-3.5 mr-2 text-brand-500" /> Text Properties</h3>
-                    <div className="space-y-3">
-                      <textarea 
-                        value={tracks.find(t => t.type === 'text')!.clips.find(c => c.id === selectedClipId)!.text || topText}
-                        onChange={(e) => {
-                          setTracks(prev => prev.map(t => t.type === 'text' ? {
-                            ...t, clips: t.clips.map(c => c.id === selectedClipId ? { ...c, text: e.target.value } : c)
-                          } : t));
-                        }}
-                        className="w-full h-20 bg-[#1f1f26] border border-[#262630] rounded-md p-2 text-xs text-white focus:outline-none focus:border-brand-500" 
-                      />
-                      <ColorPropRow label="Fill Color" color={textColor} value={fontSize} onChangeColor={setTextColor} onChangeValue={setFontSize} />
-                      <ColorPropRow label="Stroke Color" color={strokeColor} value={strokeWidth} onChangeColor={setStrokeColor} onChangeValue={setStrokeWidth} />
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    <h3 className="text-xs font-medium text-white/50 italic mb-3">Select a clip to edit its properties.</h3>
-                  </div>
-                )}
+                {(() => {
+                  if (!selectedClipId) return <div><h3 className="text-xs font-medium text-white/50 italic mb-3">Select a clip to edit its properties.</h3></div>;
+                  
+                  let activeClip: Clip | undefined;
+                  let activeTrackType: string | undefined;
+                  tracks.forEach(t => {
+                    const c = t.clips.find(c => c.id === selectedClipId);
+                    if (c) { activeClip = c; activeTrackType = t.type; }
+                  });
+
+                  if (!activeClip) return <div><h3 className="text-xs font-medium text-white/50 italic mb-3">Select a clip to edit its properties.</h3></div>;
+
+                  if (activeTrackType === 'text') {
+                    return (
+                      <div>
+                        <h3 className="text-xs font-medium text-white mb-3 flex items-center"><Type className="w-3.5 h-3.5 mr-2 text-brand-500" /> Text Properties</h3>
+                        <div className="space-y-3">
+                          <textarea 
+                            value={activeClip.text || topText}
+                            onChange={(e) => {
+                              setTracks(prev => prev.map(t => t.type === 'text' ? {
+                                ...t, clips: t.clips.map(c => c.id === selectedClipId ? { ...c, text: e.target.value } : c)
+                              } : t));
+                            }}
+                            className="w-full h-20 bg-[#1f1f26] border border-[#262630] rounded-md p-2 text-xs text-white focus:outline-none focus:border-brand-500" 
+                          />
+                          <ColorPropRow label="Fill Color" color={textColor} value={fontSize} onChangeColor={setTextColor} onChangeValue={setFontSize} />
+                          <ColorPropRow label="Stroke Color" color={strokeColor} value={strokeWidth} onChangeColor={setStrokeColor} onChangeValue={setStrokeWidth} />
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (activeTrackType === 'video' || activeTrackType === 'audio') {
+                    return (
+                      <div>
+                        <h3 className="text-xs font-medium text-white mb-3 flex items-center"><SlidersHorizontal className="w-3.5 h-3.5 mr-2 text-brand-500" /> Clip Properties</h3>
+                        <div className="space-y-4">
+                           <div>
+                             <div className="flex justify-between text-[10px] text-white/50 mb-1"><span>Volume</span><span>100%</span></div>
+                             <input type="range" className="w-full accent-brand-500" defaultValue="100" />
+                           </div>
+                           {activeTrackType === 'video' && (
+                             <>
+                               <div>
+                                 <div className="flex justify-between text-[10px] text-white/50 mb-1"><span>Scale</span><span>100%</span></div>
+                                 <input type="range" className="w-full accent-brand-500" defaultValue="100" />
+                               </div>
+                               <div>
+                                 <div className="flex justify-between text-[10px] text-white/50 mb-1"><span>Opacity</span><span>100%</span></div>
+                                 <input type="range" className="w-full accent-brand-500" defaultValue="100" />
+                               </div>
+                             </>
+                           )}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (activeTrackType === 'effect') {
+                    return (
+                      <div>
+                        <h3 className="text-xs font-medium text-white mb-3 flex items-center"><Sparkles className="w-3.5 h-3.5 mr-2 text-purple-500" /> Effect Properties</h3>
+                        <div className="space-y-4">
+                           <div>
+                             <div className="flex justify-between text-[10px] text-white/50 mb-1"><span>Intensity</span><span>50%</span></div>
+                             <input type="range" className="w-full accent-purple-500" defaultValue="50" />
+                           </div>
+                           <div>
+                             <div className="flex justify-between text-[10px] text-white/50 mb-1"><span>Duration</span><span>{activeClip.duration.toFixed(1)}s</span></div>
+                             <input type="range" className="w-full accent-purple-500" min="0.5" max="10" step="0.1" value={activeClip.duration} onChange={(e) => {
+                               const newDur = parseFloat(e.target.value);
+                               setTracks(prev => prev.map(t => t.type === 'effect' ? {
+                                 ...t, clips: t.clips.map(c => c.id === selectedClipId ? { ...c, duration: newDur } : c)
+                               } : t));
+                             }} />
+                           </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return null;
+                })()}
                 
                 <div className="w-full h-px bg-[#262630]"></div>
 
@@ -849,13 +910,19 @@ export default function App(): React.JSX.Element {
                          }}
                          onDrop={(e) => {
                             e.preventDefault();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const clickX = e.clientX - rect.left;
+                            const percent = clickX / rect.width;
+                            const newTime = percent * totalDuration;
+
                             const file = e.dataTransfer.getData('mediaPath');
+                            const effect = e.dataTransfer.getData('effect');
+                            const isLut = e.dataTransfer.getData('isLut') === 'true';
+                            const lutPath = e.dataTransfer.getData('lutPath');
+                            const transition = e.dataTransfer.getData('transition');
+                            const textPreset = e.dataTransfer.getData('textPreset');
+
                             if (file) {
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              const clickX = e.clientX - rect.left;
-                              const percent = clickX / rect.width;
-                              const newTime = percent * totalDuration;
-                              
                               const videoElement = document.createElement('video');
                               videoElement.src = `file://${file}`;
                               videoElement.onloadedmetadata = () => {
@@ -885,6 +952,44 @@ export default function App(): React.JSX.Element {
                                    return newTracks;
                                 });
                               };
+                            } else if (effect || transition || textPreset) {
+                               const newItemType = effect ? 'effect' : transition ? 'effect' : 'text';
+                               const newItemName = effect || transition || textPreset;
+                               if (track.type !== newItemType) {
+                                 // Only allow drops on matching tracks for simplicity, or automatically find the right track
+                                 // In a real NLE, dropping an effect on a video clip applies it to the clip.
+                                 // Here we add it as an adjustment layer on the effect track if it's an effect/transition
+                               }
+                               
+                               const newClip: Clip = {
+                                  id: Math.random().toString(36).substr(2, 9),
+                                  name: newItemName,
+                                  type: track.type,
+                                  start: newTime,
+                                  duration: transition ? 2 : 5,
+                                  sourceStart: 0,
+                                  text: textPreset ? 'NEW TEXT' : undefined,
+                               };
+                               
+                               if (isLut && lutPath) {
+                                  // @ts-ignore
+                                  newClip.lutPath = lutPath;
+                               }
+                               
+                               setTracks(prevTracks => {
+                                   // Put it on the matching track type
+                                   const targetTrackId = prevTracks.find(t => t.type === newItemType)?.id || track.id;
+                                   const newTracks = prevTracks.map(t => t.id === targetTrackId ? { ...t, clips: [...t.clips, newClip] } : t);
+                                   setHistory(prevHistory => {
+                                      const idx = historyIndexRef.current;
+                                      const newHistory = prevHistory.slice(0, idx + 1);
+                                      newHistory.push(newTracks);
+                                      if (newHistory.length > 50) newHistory.shift();
+                                      return newHistory;
+                                   });
+                                   setHistoryIndex(prev => Math.min(prev + 1, 49));
+                                   return newTracks;
+                               });
                             }
                          }}
                        >
@@ -897,6 +1002,7 @@ export default function App(): React.JSX.Element {
                           if (track.type === 'video') bgClass = 'bg-brand-900/30 border-brand-500/50';
                           if (track.type === 'text') bgClass = 'bg-amber-500/20 border-amber-500/50';
                           if (track.type === 'audio') bgClass = 'bg-success-500/20 border-success-500/50';
+                          if (track.type === 'effect') bgClass = 'bg-purple-500/20 border-purple-500/50';
 
                           return (
                             <div 
@@ -909,8 +1015,15 @@ export default function App(): React.JSX.Element {
                               style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
                               onMouseDown={(e) => handleClipMouseDown(e, clip, track.id, 'move')}
                             >
-                              <div className="absolute inset-0 flex items-center px-2 pointer-events-none">
-                                <span className="text-[9px] text-white/80 truncate">{clip.name}</span>
+                              {track.type === 'audio' && (
+                                <div className="absolute inset-0 flex items-center justify-around opacity-30 pointer-events-none overflow-hidden px-1">
+                                  {Array.from({length: 40}).map((_, i) => (
+                                    <div key={i} className="w-[1px] bg-success-500 rounded-full" style={{ height: `${Math.max(10, Math.random() * 80)}%` }} />
+                                  ))}
+                                </div>
+                              )}
+                              <div className="absolute inset-0 flex items-center px-2 pointer-events-none z-10">
+                                <span className="text-[9px] text-white/80 truncate drop-shadow-md">{clip.name}</span>
                               </div>
                               
                               {/* Trim handles */}
