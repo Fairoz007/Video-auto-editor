@@ -1,15 +1,36 @@
-import { useState, useEffect, cloneElement, useRef } from 'react'
+import { useState, useEffect, cloneElement, useRef, useCallback } from 'react'
 import { 
   Play, Pause, SkipBack, SkipForward, 
   Plus, Settings, 
   Zap, Video, 
-  Maximize2, Image,
+  Maximize2, Image as ImageIcon,
   Home, Type, Sparkles, SlidersHorizontal, Music, MessageSquare, Upload,
   Undo, Redo, Scissors, Trash2, Copy, CheckCircle2, ChevronDown, AlignLeft, AlignCenter, AlignRight, List,
-  Mic, Crosshair, ChevronRight, Download, Loader2
+  Mic, Crosshair, ChevronRight, Download, Loader2, MousePointer2
 } from 'lucide-react'
 import clsx from 'clsx'
 import AutomationDashboard from './components/AutomationDashboard'
+
+type TrackType = 'video' | 'audio' | 'text' | 'effect';
+
+type Clip = {
+  id: string;
+  name: string;
+  type: TrackType;
+  start: number;
+  duration: number;
+  sourceStart: number;
+  sourceFile?: string;
+  color?: string;
+  text?: string;
+};
+
+type Track = {
+  id: string;
+  type: TrackType;
+  name: string;
+  clips: Clip[];
+};
 
 export default function App(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState('dashboard')
@@ -32,11 +53,11 @@ export default function App(): React.JSX.Element {
   const [useGpu, setUseGpu] = useState(true)
   const [scriptMode, setScriptMode] = useState('autoedit')
   const [videoDuration, setVideoDuration] = useState(60)
+  const [totalDuration, setTotalDuration] = useState(60)
   
   // Scenes State
   const [scenes, setScenes] = useState<any[]>([])
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [totalDuration, setTotalDuration] = useState(60)
   
   // Tasks State
   const [renderTasks, setRenderTasks] = useState<any[]>([])
@@ -44,17 +65,292 @@ export default function App(): React.JSX.Element {
   // System Stats
   const [sysStats, setSysStats] = useState({ cpu: 0, ram: 0, totalRam: 16 })
 
+  // --- NEW TIMELINE STATE ---
+  const [tracks, setTracks] = useState<Track[]>([
+    { id: 't1', type: 'text', name: 'Text Overlay', clips: [{ id: 'c1', name: 'Title', type: 'text', start: 0, duration: 10, sourceStart: 0, text: 'MY EPIC MOMENTS' }] },
+    { id: 'v1', type: 'video', name: 'Video Track', clips: [] },
+    { id: 'e1', type: 'effect', name: 'Effects Track', clips: [] },
+    { id: 'a1', type: 'audio', name: 'Audio Track', clips: [] },
+  ]);
+
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [timelineZoom, setTimelineZoom] = useState(1);
+  const [history, setHistory] = useState<Track[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+
+  const pushHistory = useCallback((newTracks: Track[]) => {
+    setHistory(prev => {
+      const newHistory = prev.slice(0, historyIndex + 1);
+      newHistory.push(newTracks);
+      if (newHistory.length > 50) newHistory.shift(); // Max 50 states
+      return newHistory;
+    });
+    setHistoryIndex(prev => Math.min(prev + 1, 49));
+    setTracks(newTracks);
+  }, [historyIndex]);
+
+  const undo = () => {
+    if (historyIndex > 0) {
+      setHistoryIndex(prev => prev - 1);
+      setTracks(history[historyIndex - 1]);
+    }
+  };
+
+  const redo = () => {
+    if (historyIndex < history.length - 1) {
+      setHistoryIndex(prev => prev + 1);
+      setTracks(history[historyIndex + 1]);
+    }
+  };
+
+  // Drag logic
+  const [draggingClip, setDraggingClip] = useState<{ id: string, trackId: string, startX: number, originalStart: number, type: 'move' | 'trim-start' | 'trim-end' } | null>(null);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!draggingClip) return;
+      const timelineEl = document.getElementById('timeline-container');
+      if (!timelineEl) return;
+
+      const pxPerSec = (timelineEl.clientWidth / totalDuration) * timelineZoom;
+      const deltaX = e.clientX - draggingClip.startX;
+      const deltaSec = deltaX / pxPerSec;
+
+      setTracks(prev => prev.map(track => {
+        if (track.id !== draggingClip.trackId) return track;
+        return {
+          ...track,
+          clips: track.clips.map(clip => {
+            if (clip.id !== draggingClip.id) return clip;
+            
+            if (draggingClip.type === 'move') {
+              let newStart = Math.max(0, draggingClip.originalStart + deltaSec);
+              return { ...clip, start: newStart };
+            } else if (draggingClip.type === 'trim-start') {
+              let newStart = Math.max(0, draggingClip.originalStart + deltaSec);
+              let deltaTrim = newStart - clip.start;
+              let newDuration = clip.duration - deltaTrim;
+              if (newDuration < 0.5) {
+                newDuration = 0.5;
+                newStart = clip.start + clip.duration - 0.5;
+              }
+              return { ...clip, start: newStart, duration: newDuration, sourceStart: clip.sourceStart + deltaTrim };
+            } else if (draggingClip.type === 'trim-end') {
+              let newDuration = Math.max(0.5, clip.duration + deltaSec);
+              return { ...clip, duration: newDuration };
+            }
+            return clip;
+          })
+        };
+      }));
+    };
+
+    const handleMouseUp = () => {
+      if (draggingClip) {
+        pushHistory(tracks);
+        setDraggingClip(null);
+      }
+    };
+
+    if (draggingClip) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [draggingClip, totalDuration, timelineZoom, tracks, pushHistory]);
+
+  const handleClipMouseDown = (e: React.MouseEvent, clip: Clip, trackId: string, type: 'move' | 'trim-start' | 'trim-end') => {
+    e.stopPropagation();
+    setSelectedClipId(clip.id);
+    setDraggingClip({
+      id: clip.id,
+      trackId,
+      startX: e.clientX,
+      originalStart: clip.start,
+      type
+    });
+  };
+
+  const splitClip = () => {
+    if (!selectedClipId) return;
+    let modified = false;
+    const newTracks = tracks.map(track => {
+      const clipIndex = track.clips.findIndex(c => c.id === selectedClipId);
+      if (clipIndex === -1) return track;
+      
+      const clip = track.clips[clipIndex];
+      if (currentTime > clip.start && currentTime < clip.start + clip.duration) {
+        modified = true;
+        const clip1 = { ...clip, duration: currentTime - clip.start };
+        const clip2 = { 
+          ...clip, 
+          id: Math.random().toString(36).substr(2, 9),
+          start: currentTime, 
+          duration: clip.duration - (currentTime - clip.start),
+          sourceStart: clip.sourceStart + (currentTime - clip.start)
+        };
+        const newClips = [...track.clips];
+        newClips.splice(clipIndex, 1, clip1, clip2);
+        return { ...track, clips: newClips };
+      }
+      return track;
+    });
+
+    if (modified) {
+      pushHistory(newTracks);
+    }
+  };
+
+  const deleteSelectedClip = () => {
+    if (!selectedClipId) return;
+    const newTracks = tracks.map(track => ({
+      ...track,
+      clips: track.clips.filter(c => c.id !== selectedClipId)
+    }));
+    pushHistory(newTracks);
+    setSelectedClipId(null);
+  };
+
+  const duplicateSelectedClip = () => {
+    if (!selectedClipId) return;
+    const newTracks = tracks.map(track => {
+      const clip = track.clips.find(c => c.id === selectedClipId);
+      if (clip) {
+        const newClip = {
+          ...clip,
+          id: Math.random().toString(36).substr(2, 9),
+          start: clip.start + clip.duration
+        };
+        return { ...track, clips: [...track.clips, newClip] };
+      }
+      return track;
+    });
+    pushHistory(newTracks);
+  };
+
+  const rippleDelete = () => {
+    if (!selectedClipId) return;
+    const newTracks = tracks.map(track => {
+      const clipIndex = track.clips.findIndex(c => c.id === selectedClipId);
+      if (clipIndex === -1) return track;
+      const clip = track.clips[clipIndex];
+      const gap = clip.duration;
+      
+      const newClips = track.clips.filter(c => c.id !== selectedClipId).map(c => {
+        if (c.start >= clip.start) {
+          return { ...c, start: Math.max(0, c.start - gap) };
+        }
+        return c;
+      });
+      return { ...track, clips: newClips };
+    });
+    pushHistory(newTracks);
+    setSelectedClipId(null);
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === 'c' || e.key === 's') {
+        splitClip();
+      } else if (e.key === 'Backspace' || e.key === 'Delete') {
+        if (e.shiftKey) rippleDelete();
+        else deleteSelectedClip();
+      } else if (e.key === 'z' && (e.metaKey || e.ctrlKey)) {
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (e.key === 'd' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        duplicateSelectedClip();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedClipId, currentTime, tracks, isPlaying, togglePlay, historyIndex, history]);
+
+
+  useEffect(() => {
+    if (history.length === 0) {
+      pushHistory(tracks);
+    }
+  }, []);
+
+  // Sync video element with timeline playhead
+  useEffect(() => {
+    const videoTrack = tracks.find(t => t.type === 'video');
+    if (!videoTrack) return;
+    
+    const activeClip = videoTrack.clips.find(c => currentTime >= c.start && currentTime < c.start + c.duration);
+    
+    if (activeClip && activeClip.sourceFile && videoRef.current) {
+      if (!videoRef.current.src.endsWith(activeClip.sourceFile.split('/').pop()!)) {
+        videoRef.current.src = `file://${activeClip.sourceFile}`;
+      }
+      
+      const targetTime = activeClip.sourceStart + (currentTime - activeClip.start);
+      if (Math.abs(videoRef.current.currentTime - targetTime) > 0.15) {
+        videoRef.current.currentTime = targetTime;
+      }
+      
+      if (isPlaying && videoRef.current.paused) {
+        videoRef.current.play().catch(e => console.error("Play error:", e));
+      } else if (!isPlaying && !videoRef.current.paused) {
+        videoRef.current.pause();
+      }
+    } else if (videoRef.current && !videoRef.current.paused) {
+      videoRef.current.pause();
+    }
+  }, [currentTime, tracks, isPlaying]);
+
+  // Handle Playback loop
+  useEffect(() => {
+    let animationFrame: number;
+    let lastTime = performance.now();
+    
+    const tick = (now: number) => {
+      if (isPlaying) {
+        const deltaSec = (now - lastTime) / 1000;
+        lastTime = now;
+        
+        setCurrentTime(prev => {
+          let next = prev + deltaSec;
+          if (next >= totalDuration) {
+            setIsPlaying(false);
+            return prev;
+          }
+          return next;
+        });
+        animationFrame = requestAnimationFrame(tick);
+      }
+    };
+
+    if (isPlaying) {
+      animationFrame = requestAnimationFrame(tick);
+    }
+    return () => cancelAnimationFrame(animationFrame);
+  }, [isPlaying, totalDuration]);
+
+
   useEffect(() => {
     // Poll system stats
     const interval = setInterval(async () => {
       try {
         // @ts-ignore
-        const stats = await window.api.osStats()
-        const usedRam = (stats.totalmem - stats.freemem) / (1024 * 1024 * 1024)
-        const totalRam = stats.totalmem / (1024 * 1024 * 1024)
-        // Mocking CPU usage for now as os.cpus() needs diffing
-        const cpuUsage = Math.floor(Math.random() * 20) + 5
-        setSysStats({ cpu: cpuUsage, ram: usedRam, totalRam })
+        if (window.api && window.api.osStats) {
+          // @ts-ignore
+          const stats = await window.api.osStats()
+          const usedRam = (stats.totalmem - stats.freemem) / (1024 * 1024 * 1024)
+          const totalRam = stats.totalmem / (1024 * 1024 * 1024)
+          const cpuUsage = Math.floor(Math.random() * 20) + 5
+          setSysStats({ cpu: cpuUsage, ram: usedRam, totalRam })
+        }
       } catch (e) {}
     }, 2000)
     return () => clearInterval(interval)
@@ -92,13 +388,33 @@ export default function App(): React.JSX.Element {
   const handleSelectFile = async () => {
     try {
       // @ts-ignore
+      if (!window.api) return;
+      // @ts-ignore
       const file = await window.api.selectFile()
       if (file) {
         setSelectedFile(file)
-        if (videoRef.current) {
-          videoRef.current.src = `file://${file}`
-          videoRef.current.load()
-        }
+        
+        // Add to timeline automatically
+        const videoElement = document.createElement('video');
+        videoElement.src = `file://${file}`;
+        videoElement.onloadedmetadata = () => {
+          const dur = videoElement.duration;
+          if (dur > totalDuration) setTotalDuration(dur + 10);
+          
+          const newVideoClip: Clip = {
+            id: Math.random().toString(36).substr(2, 9),
+            name: file.split('/').pop() || 'Video',
+            type: 'video',
+            start: 0,
+            duration: dur,
+            sourceStart: 0,
+            sourceFile: file,
+          };
+          
+          const newTracks = tracks.map(t => t.id === 'v1' ? { ...t, clips: [...t.clips, newVideoClip] } : t);
+          pushHistory(newTracks);
+        };
+        
         if (autoCut) {
           setIsAnalyzing(true)
           try {
@@ -111,7 +427,7 @@ export default function App(): React.JSX.Element {
             const data = await res.json()
             if (data.scenes && data.scenes.length > 0) {
               setScenes(data.scenes)
-              setTotalDuration(data.scenes[data.scenes.length - 1].end || 60)
+              // We could automatically slice the clip here, but for NLE simplicity, we just keep the clips array
             }
           } catch (e) {
             console.error('Scene detection failed', e)
@@ -125,21 +441,8 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  const togglePlay = () => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.pause()
-      } else {
-        videoRef.current.play()
-      }
-      setIsPlaying(!isPlaying)
-    }
-  }
-
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime)
-    }
+  function togglePlay() {
+    setIsPlaying(prev => !prev);
   }
 
   const formatTime = (time: number) => {
@@ -150,14 +453,11 @@ export default function App(): React.JSX.Element {
   }
 
   const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (videoRef.current && totalDuration > 0) {
-      const rect = e.currentTarget.getBoundingClientRect()
-      const clickX = e.clientX - rect.left
-      const percent = clickX / rect.width
-      const newTime = percent * totalDuration
-      videoRef.current.currentTime = newTime
-      setCurrentTime(newTime)
-    }
+    const rect = e.currentTarget.getBoundingClientRect()
+    const clickX = e.clientX - rect.left
+    const percent = clickX / rect.width
+    const newTime = (percent * totalDuration) / timelineZoom
+    setCurrentTime(newTime)
   }
 
   const handleRender = async () => {
@@ -177,18 +477,21 @@ export default function App(): React.JSX.Element {
       }
 
       // @ts-ignore
-      const res = await window.api.runPython(script, args)
-      
-      if (res.success) {
-        setRenderTasks(prev => [...prev, {
-          id: Math.random().toString(36).substring(7),
-          title: script,
-          details: `Completed successfully`,
-          status: "Completed",
-          progress: 100
-        }])
-      } else {
-        console.error('Script failed:', res.output)
+      if (window.api && window.api.runPython) {
+        // @ts-ignore
+        const res = await window.api.runPython(script, args)
+        
+        if (res.success) {
+          setRenderTasks(prev => [...prev, {
+            id: Math.random().toString(36).substring(7),
+            title: script,
+            details: `Completed successfully`,
+            status: "Completed",
+            progress: 100
+          }])
+        } else {
+          console.error('Script failed:', res.output)
+        }
       }
     } catch (error) {
       console.error('Render failed:', error)
@@ -205,13 +508,13 @@ export default function App(): React.JSX.Element {
         <div className="flex items-center space-x-6 window-no-drag">
           <div className="flex items-center space-x-2 text-brand-400">
             <Video className="w-4 h-4 fill-brand-500" />
-            <span className="font-semibold text-xs tracking-wide text-white">Video Auto Editor</span>
+            <span className="font-semibold text-xs tracking-wide text-white">Video Auto Editor Pro</span>
           </div>
           <nav className="flex space-x-4 text-[11px] text-white/70">
             <button className="hover:text-white transition-colors">File</button>
             <button className="hover:text-white transition-colors">Edit</button>
             <button className="hover:text-white transition-colors">View</button>
-            <button className="hover:text-white transition-colors">Tools</button>
+            <button className="hover:text-white transition-colors">Sequence</button>
             <button className="hover:text-white transition-colors">Help</button>
           </nav>
         </div>
@@ -243,7 +546,7 @@ export default function App(): React.JSX.Element {
         <aside className="w-56 bg-[#141419] border-r border-[#262630] flex flex-col pt-4">
           <nav className="flex-1 flex flex-col px-3 space-y-1 overflow-y-auto">
             <SidebarItem icon={<Home />} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} isBrand />
-            <SidebarItem icon={<Image />} label="Media" active={activeTab === 'media'} onClick={() => setActiveTab('media')} />
+            <SidebarItem icon={<ImageIcon />} label="Media" active={activeTab === 'media'} onClick={() => setActiveTab('media')} />
             <SidebarItem icon={<Scissors />} label="Edit" active={activeTab === 'edit'} onClick={() => setActiveTab('edit')} />
             <SidebarItem icon={<Type />} label="Text / Overlays" active={activeTab === 'text'} onClick={() => setActiveTab('text')} />
             <SidebarItem icon={<Sparkles />} label="Effects" active={activeTab === 'effects'} onClick={() => setActiveTab('effects')} />
@@ -255,8 +558,6 @@ export default function App(): React.JSX.Element {
             <SidebarItem icon={<Zap />} label="Automation" active={activeTab === 'automation'} onClick={() => setActiveTab('automation')} />
             <SidebarItem icon={<Settings />} label="Settings" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
           </nav>
-
-
 
           {/* Bottom Left: Project Details */}
           <div className="p-4 border-t border-[#262630] space-y-3 bg-[#0d0d12]">
@@ -281,9 +582,6 @@ export default function App(): React.JSX.Element {
                 <ChevronDown className="w-3 h-3 text-white/50" />
               </div>
             </div>
-            <button className="w-full mt-2 bg-brand-500 hover:bg-brand-600 text-white font-medium text-xs py-2.5 rounded-lg transition-colors">
-              New Project
-            </button>
           </div>
         </aside>
 
@@ -306,7 +604,6 @@ export default function App(): React.JSX.Element {
                         <Download className="w-3 h-3 text-brand-400" />
                         <span>Import</span>
                       </button>
-                      <button className="p-1 hover:bg-[#262630] rounded"><List className="w-4 h-4 text-white/60" /></button>
                     </div>
                   </div>
 
@@ -314,7 +611,6 @@ export default function App(): React.JSX.Element {
                     <button className="text-xs font-medium text-brand-400 border-b-2 border-brand-400 pb-1">All</button>
                     <button className="text-xs font-medium text-white/50 hover:text-white transition-colors pb-1">Videos</button>
                     <button className="text-xs font-medium text-white/50 hover:text-white transition-colors pb-1">Audio</button>
-                    <button className="text-xs font-medium text-white/50 hover:text-white transition-colors pb-1">Images</button>
                   </div>
 
                   <div className="flex-1 p-4 overflow-y-auto space-y-4">
@@ -332,27 +628,14 @@ export default function App(): React.JSX.Element {
                            <div className="aspect-video bg-[#0d0d12] relative">
                              <div className="absolute inset-0 bg-gradient-to-br from-brand-900/30 to-[#0d0d12]"></div>
                              <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                                <Play className="w-6 h-6 text-white fill-white" />
+                                <Video className="w-6 h-6 text-white" />
                              </div>
-                             <div className="absolute top-1 right-1 w-3 h-3 bg-brand-500 rounded flex items-center justify-center"><CheckCircle2 className="w-2 h-2 text-white" /></div>
                            </div>
                            <div className="p-2">
                              <p className="text-[10px] text-white/90 truncate">{selectedFile.split('/').pop()}</p>
                            </div>
                         </div>
                       )}
-                      {[1,2,3,4,5].map((i) => (
-                         <div key={i} className="group relative rounded-lg overflow-hidden bg-[#1f1f26] border border-[#262630] hover:border-brand-500 cursor-pointer transition-colors">
-                           <div className="aspect-video bg-[#0d0d12] relative">
-                             {/* Fake thumbnail img */}
-                             <div className="absolute inset-0 bg-gradient-to-br from-brand-900/10 to-[#0d0d12]"></div>
-                             <div className="absolute bottom-1 right-1 bg-black/60 px-1 rounded text-[9px] font-mono">00:15</div>
-                           </div>
-                           <div className="p-1.5 text-center">
-                             <p className="text-[10px] text-white/80 truncate">clip_0{i}.mp4</p>
-                           </div>
-                         </div>
-                      ))}
                     </div>
                   </div>
                 </div>
@@ -362,49 +645,38 @@ export default function App(): React.JSX.Element {
                    <div className="h-12 flex items-center justify-center space-x-4 border-b border-[#262630] bg-[#141419]">
                      <div className="flex items-center space-x-2 bg-[#0d0d12] border border-[#262630] rounded-md px-2 py-1">
                        <span className="text-[10px] text-white/70">1080x1920 (9:16)</span>
-                       <ChevronDown className="w-3 h-3 text-white/40" />
                      </div>
                      <div className="flex items-center space-x-2 bg-[#0d0d12] border border-[#262630] rounded-md px-2 py-1">
-                       <span className="text-[10px] text-white/70">60 FPS</span>
-                       <ChevronDown className="w-3 h-3 text-white/40" />
-                     </div>
-                     <div className="flex-1"></div>
-                     <div className="flex items-center space-x-2 mr-4">
-                       <span className="text-[10px] text-white/50">Preview Quality</span>
-                       <div className="flex items-center space-x-2 bg-[#0d0d12] border border-[#262630] rounded-md px-2 py-1">
-                         <span className="text-[10px] text-white/90">High</span>
-                         <ChevronDown className="w-3 h-3 text-white/40" />
-                       </div>
+                       <span className="text-[10px] text-white/70">{fps} FPS</span>
                      </div>
                    </div>
                    
                    <div className="flex-1 bg-[#0d0d12] flex flex-col items-center justify-center p-6 relative">
                      {/* Video Area */}
                      <div className="relative aspect-[9/16] h-full max-h-[650px] bg-black rounded-sm shadow-2xl overflow-hidden border border-white/5 group">
-                       {selectedFile && (
-                         <video 
-                           ref={videoRef}
-                           className="absolute inset-0 w-full h-full object-contain z-0"
-                           onTimeUpdate={handleTimeUpdate}
-                           onEnded={() => setIsPlaying(false)}
-                           onLoadedMetadata={() => {
-                             if (videoRef.current) setTotalDuration(videoRef.current.duration)
-                           }}
-                         />
-                       )}
-                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-                          <div className="text-center font-['Bebas_Neue']" style={{ 
-                              WebkitTextStroke: `${strokeWidth}px ${strokeColor}`
-                           }}>
-                             <h1 className="text-5xl text-white drop-shadow-lg tracking-wider" style={{ textShadow: `0px ${strokeWidth}px 10px rgba(0,0,0,0.8)` }}>
-                               {topText.split(' ').slice(0, 2).join(' ')}
-                             </h1>
-                             <h1 className="text-6xl drop-shadow-lg tracking-wider -mt-2" style={{ color: textColor, textShadow: `0px ${strokeWidth}px 10px rgba(0,0,0,0.8)` }}>
-                               {topText.split(' ').slice(2).join(' ')}
-                             </h1>
-                             <div className="w-32 h-1 bg-white/80 mx-auto mt-4 rounded-full rotate-[-2deg]"></div>
-                          </div>
-                       </div>
+                       <video 
+                         ref={videoRef}
+                         className="absolute inset-0 w-full h-full object-contain z-0"
+                         muted
+                       />
+                       
+                       {/* Text Overlays Layer */}
+                       {tracks.find(t => t.type === 'text')?.clips.map(clip => {
+                         if (currentTime >= clip.start && currentTime < clip.start + clip.duration) {
+                           return (
+                             <div key={clip.id} className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10 p-8">
+                               <div className="text-center font-['Bebas_Neue']" style={{ 
+                                   WebkitTextStroke: `${strokeWidth}px ${strokeColor}`
+                               }}>
+                                  <h1 className="text-5xl text-white drop-shadow-lg tracking-wider uppercase leading-tight" style={{ textShadow: `0px ${strokeWidth}px 10px rgba(0,0,0,0.8)` }}>
+                                    {clip.text || topText}
+                                  </h1>
+                               </div>
+                             </div>
+                           )
+                         }
+                         return null;
+                       })}
                      </div>
                  
                  {/* Player Controls */}
@@ -413,11 +685,11 @@ export default function App(): React.JSX.Element {
                       <span className="text-[10px] font-mono text-brand-400">{formatTime(currentTime)} <span className="text-white/40">/ {formatTime(totalDuration)}</span></span>
                       
                       <div className="flex items-center space-x-4">
-                        <button className="text-white/60 hover:text-white transition-colors"><SkipBack className="w-4 h-4 fill-current" /></button>
-                        <button onClick={togglePlay} className="text-white/60 hover:text-white transition-colors">
+                        <button className="text-white/60 hover:text-white transition-colors" onClick={() => setCurrentTime(Math.max(0, currentTime - 1))}><SkipBack className="w-4 h-4 fill-current" /></button>
+                        <button onClick={togglePlay} className="text-white/60 hover:text-white transition-colors outline-none focus:outline-none">
                           {isPlaying ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
                         </button>
-                        <button className="text-white/60 hover:text-white transition-colors"><SkipForward className="w-4 h-4 fill-current" /></button>
+                        <button className="text-white/60 hover:text-white transition-colors" onClick={() => setCurrentTime(Math.min(totalDuration, currentTime + 1))}><SkipForward className="w-4 h-4 fill-current" /></button>
                       </div>
 
                       <div className="flex items-center space-x-2 text-white/40">
@@ -428,7 +700,6 @@ export default function App(): React.JSX.Element {
                       </div>
                       
                       <div className="flex items-center space-x-3 text-white/60">
-                        <button className="hover:text-white"><Crosshair className="w-4 h-4" /></button>
                         <button className="hover:text-white"><Maximize2 className="w-4 h-4" /></button>
                       </div>
                     </div>
@@ -440,87 +711,35 @@ export default function App(): React.JSX.Element {
             <div className="w-[320px] bg-[#141419] border-l border-[#262630] flex flex-col">
               <div className="flex border-b border-[#262630]">
                 <button className="flex-1 py-3 text-xs font-semibold text-white border-b-2 border-brand-500">Edit</button>
-                <button className="flex-1 py-3 text-xs font-medium text-white/50 hover:text-white transition-colors">Auto Edit</button>
                 <button className="flex-1 py-3 text-xs font-medium text-white/50 hover:text-white transition-colors">Export</button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                
-                {/* Project Settings */}
-                <div>
-                  <h3 className="text-xs font-medium text-white mb-3">Project Settings</h3>
-                   <div className="space-y-2">
-                     <div className="flex items-center justify-between">
-                       <span className="text-[10px] text-white/50">Script Mode</span>
-                       <select value={scriptMode} onChange={(e) => setScriptMode(e.target.value)} className="bg-[#1f1f26] border border-[#262630] rounded text-xs text-white/90 px-2 py-1 outline-none">
-                         <option value="autoedit">Auto Edit Shorts</option>
-                         <option value="movie">Movie Editor</option>
-                         <option value="shorts">Legacy Shorts Editor</option>
-                       </select>
-                     </div>
-                     <PropRow label="Resolution" value="1080x1920 (9:16)" />
-                     <div className="flex items-center justify-between">
-                       <span className="text-[10px] text-white/50">Frame Rate</span>
-                       <select value={fps} onChange={(e) => setFps(Number(e.target.value))} className="bg-[#1f1f26] border border-[#262630] rounded text-xs text-white/90 px-2 py-1 outline-none">
-                         <option value={30}>30 FPS</option>
-                         <option value={60}>60 FPS</option>
-                       </select>
-                     </div>
-                     <div className="flex items-center justify-between">
-                       <span className="text-[10px] text-white/50">Duration (sec)</span>
-                       <input type="number" value={videoDuration} onChange={(e) => setVideoDuration(Number(e.target.value))} className="bg-[#1f1f26] border border-[#262630] rounded text-xs text-white/90 px-2 py-1 outline-none w-16 text-right" />
-                     </div>
-                     <div className="pt-2 space-y-2">
-                       <ToggleRow label="Auto Cut (Smart)" active={autoCut} onClick={() => setAutoCut(!autoCut)} />
-                       <ToggleRow label="GPU Acceleration (NVENC)" active={useGpu} onClick={() => setUseGpu(!useGpu)} />
-                     </div>
-                  </div>
-                </div>
-
-                <div className="w-full h-px bg-[#262630]"></div>
-
-                {/* Text Overlay */}
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-xs font-medium text-white">Text Overlay</h3>
-                    <div className="flex items-center space-x-2">
-                       <Plus className="w-3.5 h-3.5 text-white/60 cursor-pointer hover:text-white" />
-                       <Toggle active />
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    <input type="text" value={topText} onChange={(e) => setTopText(e.target.value)} className="w-full bg-[#1f1f26] border border-[#262630] rounded-md px-3 py-2 text-xs text-white focus:outline-none focus:border-brand-500" />
-                    
-                    <div className="flex items-center space-x-2">
-                      <div className="flex-1 flex items-center justify-between bg-[#1f1f26] border border-[#262630] rounded-md px-3 py-1.5 cursor-pointer">
-                        <span className="text-xs text-white/90">Bebas Neue</span>
-                        <ChevronDown className="w-3 h-3 text-white/50" />
-                      </div>
-                      <div className="w-20 flex items-center justify-between bg-[#1f1f26] border border-[#262630] rounded-md px-3 py-1.5 cursor-pointer">
-                        <input type="number" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} className="w-full bg-transparent text-xs text-white/90 outline-none" />
-                      </div>
-                      <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="w-8 h-8 rounded-md bg-transparent border border-[#262630] cursor-pointer" />
-                    </div>
-
-                    <div className="flex items-center space-x-1">
-                      <ToolBtn icon={<AlignLeft />} />
-                      <ToolBtn icon={<AlignCenter />} active />
-                      <ToolBtn icon={<AlignRight />} />
-                      <div className="w-px h-4 bg-[#262630] mx-1"></div>
-                      <ToolBtn icon={<Type />} />
-                    </div>
-
-                    <div className="space-y-2 pt-2">
+                {/* Text Overlay editor */}
+                {selectedClipId && tracks.find(t => t.type === 'text')?.clips.find(c => c.id === selectedClipId) ? (
+                  <div>
+                    <h3 className="text-xs font-medium text-white mb-3 flex items-center"><Type className="w-3.5 h-3.5 mr-2 text-brand-500" /> Text Properties</h3>
+                    <div className="space-y-3">
+                      <textarea 
+                        value={tracks.find(t => t.type === 'text')!.clips.find(c => c.id === selectedClipId)!.text || topText}
+                        onChange={(e) => {
+                          setTracks(prev => prev.map(t => t.type === 'text' ? {
+                            ...t, clips: t.clips.map(c => c.id === selectedClipId ? { ...c, text: e.target.value } : c)
+                          } : t));
+                        }}
+                        className="w-full h-20 bg-[#1f1f26] border border-[#262630] rounded-md p-2 text-xs text-white focus:outline-none focus:border-brand-500" 
+                      />
+                      <ColorPropRow label="Fill Color" color={textColor} value={fontSize} onChangeColor={setTextColor} onChangeValue={setFontSize} />
                       <ColorPropRow label="Stroke Color" color={strokeColor} value={strokeWidth} onChangeColor={setStrokeColor} onChangeValue={setStrokeWidth} />
                     </div>
                   </div>
-                </div>
-
+                ) : (
+                  <div>
+                    <h3 className="text-xs font-medium text-white/50 italic mb-3">Select a clip to edit its properties.</h3>
+                  </div>
+                )}
+                
                 <div className="w-full h-px bg-[#262630]"></div>
-
-                <Accordion title="Effects & Filters" />
-                <Accordion title="Transitions" />
-                <Accordion title="Crop & Resize" />
 
                 {/* Render Queue */}
                 <div className="pt-4">
@@ -534,10 +753,6 @@ export default function App(): React.JSX.Element {
                        ))
                      )}
                   </div>
-                  <button onClick={() => setRenderTasks(prev => prev.filter(t => t.progress < 100))} className="w-full mt-3 py-2 border border-[#262630] rounded-md text-[10px] text-white/60 hover:text-white hover:bg-[#1f1f26] transition-colors flex items-center justify-center space-x-1">
-                    <Trash2 className="w-3 h-3" />
-                    <span>Clear Completed</span>
-                  </button>
                 </div>
 
               </div>
@@ -546,108 +761,109 @@ export default function App(): React.JSX.Element {
           </div>
 
           {/* Timeline Section */}
-          <div className="h-72 bg-[#0d0d12] border-t border-[#262630] flex flex-col">
+          <div className="h-72 bg-[#0d0d12] border-t border-[#262630] flex flex-col relative select-none">
             {/* Timeline Toolbar */}
             <div className="h-10 flex items-center justify-between px-4 bg-[#141419] border-b border-[#262630]">
                <div className="flex items-center space-x-1 text-white/60">
-                 <ToolBtn icon={<Undo />} />
-                 <ToolBtn icon={<Redo />} />
+                 <button onClick={undo} disabled={historyIndex <= 0} className="p-1.5 rounded hover:bg-[#262630] disabled:opacity-30 disabled:hover:bg-transparent"><Undo className="w-3.5 h-3.5" /></button>
+                 <button onClick={redo} disabled={historyIndex >= history.length - 1} className="p-1.5 rounded hover:bg-[#262630] disabled:opacity-30 disabled:hover:bg-transparent"><Redo className="w-3.5 h-3.5" /></button>
                  <div className="w-px h-4 bg-[#262630] mx-2"></div>
-                 <ToolBtn icon={<Scissors />} />
-                 <ToolBtn icon={<Trash2 />} />
-                 <ToolBtn icon={<Copy />} />
+                 <button onClick={splitClip} className="p-1.5 rounded hover:bg-[#262630] group relative" title="Split Clip (C)"><Scissors className="w-3.5 h-3.5 group-hover:text-brand-400" /></button>
+                 <button onClick={deleteSelectedClip} className="p-1.5 rounded hover:bg-[#262630] group" title="Delete Clip (Backspace)"><Trash2 className="w-3.5 h-3.5 group-hover:text-danger-400" /></button>
+                 <button onClick={duplicateSelectedClip} className="p-1.5 rounded hover:bg-[#262630]" title="Duplicate (Cmd+D)"><Copy className="w-3.5 h-3.5" /></button>
                  <div className="w-px h-4 bg-[#262630] mx-2"></div>
-                 <ToolBtn icon={<Crosshair />} />
-                 <ToolBtn icon={<Maximize2 />} />
-                 <ToolBtn icon={<Mic />} />
-                 <ToolBtn icon={<Crosshair />} />
+                 <button className="p-1.5 rounded hover:bg-[#262630]"><MousePointer2 className="w-3.5 h-3.5 text-brand-500" /></button>
                </div>
                
-               <div className="flex items-center space-x-4 flex-1 justify-center px-8 relative">
-                 <div className="w-full max-w-2xl flex items-end justify-between px-4 pb-1 h-full text-[9px] text-white/30 font-mono">
-                    <span>00:00</span>
-                    <span>00:10</span>
-                    <span>00:20</span>
-                    <span>00:30</span>
-                    <span>00:40</span>
-                    <span>00:50</span>
-                    <span>01:00</span>
-                 </div>
+               <div className="flex items-center space-x-4">
+                 <input 
+                   type="range" 
+                   min="0.1" max="5" step="0.1" 
+                   value={timelineZoom} 
+                   onChange={(e) => setTimelineZoom(parseFloat(e.target.value))}
+                   className="w-24 accent-brand-500"
+                 />
+                 <Maximize2 className="w-3 h-3 text-white/50" />
                </div>
             </div>
 
             {/* Tracks Area */}
-            <div className="flex-1 overflow-y-auto relative bg-[#0d0d12]">
-               {/* Playhead Guide */}
-               <div className="absolute top-0 bottom-0 w-px bg-brand-500 z-50 pointer-events-none transition-all duration-100 ease-linear"
-                 style={{ left: `calc(5% + ${totalDuration > 0 ? (currentTime / totalDuration) * 75 : 0}%)` }}
-               >
-                 <div className="absolute -top-2 -translate-x-1/2 w-3 h-3 rounded-sm bg-brand-500 rotate-45"></div>
+            <div className="flex-1 overflow-y-auto overflow-x-hidden relative bg-[#0d0d12]" id="timeline-container">
+               {/* Time ruler */}
+               <div className="h-6 border-b border-[#262630] flex relative" onClick={handleTimelineClick}>
+                  <div className="w-40 bg-[#141419] border-r border-[#262630] z-20 shrink-0"></div>
+                  <div className="flex-1 relative cursor-text">
+                     {Array.from({length: Math.ceil(totalDuration / 5)}).map((_, i) => (
+                        <div key={i} className="absolute top-0 bottom-0 border-l border-[#262630] pl-1 text-[9px] text-white/30 font-mono select-none" style={{ left: `${(i * 5 / totalDuration) * 100 * timelineZoom}%` }}>
+                           00:{(i * 5).toString().padStart(2, '0')}
+                        </div>
+                     ))}
+                  </div>
                </div>
 
-               <div className="space-y-[2px] pt-2">
-                 <TrackRow label="Text Overlay" icon={<Type />}>
-                   <div className="absolute left-[10%] w-[15%] h-8 bg-brand-500/30 border border-brand-500 rounded flex items-center px-2 z-10">
-                     <span className="text-[9px] text-brand-100 truncate">{topText}</span>
-                   </div>
-                 </TrackRow>
-                 
-                 <TrackRow label="Video Track" icon={<Video />}>
-                   <div className="absolute left-[5%] right-[20%] h-12 flex relative cursor-pointer" onClick={handleTimelineClick}>
-                      {scenes.length > 0 ? (
-                        scenes.map((scene, i) => {
-                          const widthPercent = (scene.duration / totalDuration) * 100
+               {/* Playhead Guide */}
+               <div className="absolute top-0 bottom-0 w-px bg-brand-500 z-50 pointer-events-none transition-transform duration-75 ease-linear"
+                 style={{ left: `calc(10rem + ${(currentTime / totalDuration) * 100 * timelineZoom}%)` }}
+               >
+                 <div className="absolute top-4 -translate-x-1/2 w-2.5 h-2.5 rounded-sm bg-brand-500 rotate-45"></div>
+               </div>
+
+               <div className="space-y-[2px]">
+                 {tracks.map(track => (
+                   <div key={track.id} className="flex h-12 bg-[#141419]/50 hover:bg-[#141419] transition-colors border-b border-[#262630]/50 relative group">
+                     {/* Track Header */}
+                     <div className="w-40 border-r border-[#262630] flex flex-col justify-center px-3 bg-[#141419] z-20 shrink-0">
+                       <div className="flex items-center space-x-2">
+                         {track.type === 'video' ? <Video className="w-3 h-3 text-white/40" /> :
+                          track.type === 'audio' ? <Music className="w-3 h-3 text-white/40" /> :
+                          track.type === 'text' ? <Type className="w-3 h-3 text-white/40" /> :
+                          <Sparkles className="w-3 h-3 text-white/40" />}
+                         <span className="text-[9px] text-white/60 truncate">{track.name}</span>
+                       </div>
+                     </div>
+                     
+                     {/* Track Canvas */}
+                     <div className="flex-1 relative" onClick={handleTimelineClick}>
+                        {track.clips.map(clip => {
+                          const leftPercent = (clip.start / totalDuration) * 100 * timelineZoom;
+                          const widthPercent = (clip.duration / totalDuration) * 100 * timelineZoom;
+                          const isSelected = selectedClipId === clip.id;
+                          
+                          let bgClass = 'bg-[#1f1f26] border-[#262630]';
+                          if (track.type === 'video') bgClass = 'bg-brand-900/30 border-brand-500/50';
+                          if (track.type === 'text') bgClass = 'bg-amber-500/20 border-amber-500/50';
+                          if (track.type === 'audio') bgClass = 'bg-success-500/20 border-success-500/50';
+
                           return (
-                            <div key={i} style={{ width: `${widthPercent}%` }} className={clsx(
-                              "h-full rounded border overflow-hidden relative group cursor-pointer transition-all",
-                              "border-[#262630] hover:border-brand-500 hover:shadow-[0_0_0_1px_#7445ff]"
-                            )}>
-                               <div className="absolute inset-0 bg-gradient-to-br from-[#1f1f26] to-[#0d0d12]"></div>
-                               {/* Resize handles */}
-                               <div className="absolute left-0 top-0 bottom-0 w-1 bg-white/0 group-hover:bg-white/50 cursor-col-resize z-10"></div>
-                               <div className="absolute right-0 top-0 bottom-0 w-1 bg-white/0 group-hover:bg-white/50 cursor-col-resize z-10"></div>
+                            <div 
+                              key={clip.id} 
+                              className={clsx(
+                                "absolute top-1 bottom-1 rounded border overflow-hidden transition-shadow group/clip cursor-grab active:cursor-grabbing",
+                                bgClass,
+                                isSelected ? "shadow-[0_0_0_1px_#fff] z-10" : ""
+                              )}
+                              style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
+                              onMouseDown={(e) => handleClipMouseDown(e, clip, track.id, 'move')}
+                            >
+                              <div className="absolute inset-0 flex items-center px-2 pointer-events-none">
+                                <span className="text-[9px] text-white/80 truncate">{clip.name}</span>
+                              </div>
+                              
+                              {/* Trim handles */}
+                              <div 
+                                className="absolute left-0 top-0 bottom-0 w-2 hover:bg-white/50 cursor-col-resize z-20"
+                                onMouseDown={(e) => handleClipMouseDown(e, clip, track.id, 'trim-start')}
+                              />
+                              <div 
+                                className="absolute right-0 top-0 bottom-0 w-2 hover:bg-white/50 cursor-col-resize z-20"
+                                onMouseDown={(e) => handleClipMouseDown(e, clip, track.id, 'trim-end')}
+                              />
                             </div>
                           )
-                        })
-                      ) : (
-                        [1,2,3,4,5,6].map(i => (
-                          <div key={i} className={clsx(
-                            "h-full flex-1 rounded border overflow-hidden relative",
-                            i === 2 ? "border-brand-500 shadow-[0_0_0_1px_#7445ff]" : "border-[#262630]"
-                          )}>
-                             <div className="absolute inset-0 bg-gradient-to-br from-[#1f1f26] to-[#0d0d12]"></div>
-                          </div>
-                        ))
-                      )}
+                        })}
+                     </div>
                    </div>
-                 </TrackRow>
-
-                 <TrackRow label="Effects Track" icon={<Sparkles />}>
-                    <div className="absolute left-[5%] w-[8%] h-7 bg-[#0ea5e9]/20 border border-[#0ea5e9]/50 rounded flex items-center px-2">
-                      <span className="text-[9px] text-[#0ea5e9] truncate">Zoom In</span>
-                    </div>
-                    <div className="absolute left-[14%] w-[6%] h-7 bg-[#0ea5e9]/20 border border-[#0ea5e9]/50 rounded flex items-center px-2">
-                      <span className="text-[9px] text-[#0ea5e9] truncate">Fade</span>
-                    </div>
-                    <div className="absolute left-[21%] w-[10%] h-7 bg-danger-500/20 border border-danger-500/50 rounded flex items-center px-2">
-                      <span className="text-[9px] text-danger-400 truncate">Shake</span>
-                    </div>
-                    <div className="absolute left-[32%] w-[12%] h-7 bg-[#0ea5e9]/20 border border-[#0ea5e9]/50 rounded flex items-center px-2">
-                      <span className="text-[9px] text-[#0ea5e9] truncate">Light Leak</span>
-                    </div>
-                 </TrackRow>
-
-                 <TrackRow label="Audio Track" icon={<Music />}>
-                   <div className="absolute left-[5%] right-[10%] h-10 bg-success-500/10 border border-success-500/30 rounded flex items-center overflow-hidden">
-                      <div className="w-full h-full opacity-60 flex items-center space-x-0.5 px-1">
-                         {/* Fake Waveform */}
-                         {Array.from({length: 100}).map((_, i) => (
-                           <div key={i} className="flex-1 bg-success-500 rounded-full" style={{ height: `${Math.max(20, Math.random() * 100)}%` }}></div>
-                         ))}
-                      </div>
-                      <span className="absolute left-2 text-[9px] text-success-400 font-mono z-10 drop-shadow-md">epic_music.mp3</span>
-                   </div>
-                 </TrackRow>
+                 ))}
                </div>
             </div>
           </div>
@@ -660,14 +876,9 @@ export default function App(): React.JSX.Element {
       <footer className="h-8 bg-[#0d0d12] border-t border-[#262630] flex items-center px-4 justify-between text-[9px] font-mono text-white/50">
          <div className="flex items-center space-x-6">
            <div className="flex items-center space-x-1.5">
-             <span>Backend:</span>
+             <span>Python Backend:</span>
              <span className="text-success-500">Connected</span>
              <div className="w-1.5 h-1.5 rounded-full bg-success-500 animate-pulse"></div>
-           </div>
-           <div className="flex items-center space-x-1.5">
-             <span>FFmpeg:</span>
-             <span className="text-white/80">Ready</span>
-             <div className="w-1.5 h-1.5 rounded-full bg-success-500"></div>
            </div>
          </div>
          <div className="flex items-center space-x-8">
@@ -679,7 +890,7 @@ export default function App(): React.JSX.Element {
   )
 }
 
-function SidebarItem({ icon, label, active, onClick, isBrand = false }) {
+function SidebarItem({ icon, label, active, onClick, isBrand = false }: any) {
   return (
     <div 
       onClick={onClick}
@@ -696,36 +907,7 @@ function SidebarItem({ icon, label, active, onClick, isBrand = false }) {
   )
 }
 
-function PropRow({ label, value }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-[10px] text-white/50">{label}</span>
-      <div className="flex items-center space-x-2 text-xs text-white/90">
-        <span>{value}</span>
-        <ChevronDown className="w-3 h-3 text-white/40" />
-      </div>
-    </div>
-  )
-}
-
-function ToggleRow({ label, active, onClick }) {
-  return (
-    <div className="flex items-center justify-between" onClick={onClick}>
-      <span className="text-[10px] text-white/60">{label}</span>
-      <Toggle active={active} />
-    </div>
-  )
-}
-
-function Toggle({ active }) {
-  return (
-    <div className={clsx("w-6 h-3.5 rounded-full relative cursor-pointer transition-colors", active ? "bg-brand-500" : "bg-[#262630]")}>
-      <div className={clsx("absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-all", active ? "right-0.5" : "left-0.5")}></div>
-    </div>
-  )
-}
-
-function ColorPropRow({ label, color, value, onChangeColor, onChangeValue }) {
+function ColorPropRow({ label, color, value, onChangeColor, onChangeValue }: any) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-[10px] text-white/50">{label}</span>
@@ -742,24 +924,7 @@ function ColorPropRow({ label, color, value, onChangeColor, onChangeValue }) {
   )
 }
 
-function ToolBtn({ icon, active = false }) {
-  return (
-    <button className={clsx("p-1.5 rounded transition-colors", active ? "bg-[#262630] text-white" : "hover:bg-[#262630] text-white/60 hover:text-white")}>
-      {cloneElement(icon, { className: "w-3.5 h-3.5" })}
-    </button>
-  )
-}
-
-function Accordion({ title }) {
-  return (
-    <div className="flex items-center justify-between py-3 border-b border-[#262630] cursor-pointer hover:bg-[#1f1f26]/50 transition-colors">
-      <span className="text-xs font-medium text-white">{title}</span>
-      <ChevronRight className="w-3.5 h-3.5 text-white/50" />
-    </div>
-  )
-}
-
-function RenderTask({ title, details, status, progress }) {
+function RenderTask({ title, details, status, progress }: any) {
   const isComplete = progress === 100
   return (
     <div className="bg-[#1f1f26] border border-[#262630] rounded-lg p-2.5 space-y-2">
@@ -785,22 +950,6 @@ function RenderTask({ title, details, status, progress }) {
       {isComplete && (
         <p className="text-[8px] text-success-500 text-right">{status}</p>
       )}
-    </div>
-  )
-}
-
-function TrackRow({ label, icon, children }) {
-  return (
-    <div className="flex h-12 bg-[#141419]/50 hover:bg-[#141419] transition-colors border-b border-[#262630]/50 relative group">
-       <div className="w-40 border-r border-[#262630] flex items-center px-3 space-x-2 bg-[#141419] z-20">
-         {cloneElement(icon, { className: "w-3 h-3 text-white/40" })}
-         <span className="text-[9px] text-white/60 truncate">{label}</span>
-       </div>
-       <div className="flex-1 relative">
-         {/* Grid lines */}
-         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:50px_50px] pointer-events-none"></div>
-         {children}
-       </div>
     </div>
   )
 }
