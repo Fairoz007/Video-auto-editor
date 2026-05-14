@@ -320,12 +320,13 @@ export default function App(): React.JSX.Element {
     const activeClip = videoTrack.clips.find(c => currentTime >= c.start && currentTime < c.start + c.duration);
     
     if (activeClip && activeClip.sourceFile && videoRef.current) {
-      if (!videoRef.current.src.endsWith(activeClip.sourceFile.split('/').pop()!)) {
+      if (videoRef.current.dataset.clipId !== activeClip.id) {
         videoRef.current.src = `file://${activeClip.sourceFile}`;
+        videoRef.current.dataset.clipId = activeClip.id;
       }
       
       const targetTime = activeClip.sourceStart + (currentTime - activeClip.start);
-      if (!isPlaying && Math.abs(videoRef.current.currentTime - targetTime) > 0.15) {
+      if (Math.abs(videoRef.current.currentTime - targetTime) > 0.15) {
         videoRef.current.currentTime = targetTime;
       }
       
@@ -334,8 +335,13 @@ export default function App(): React.JSX.Element {
       } else if (!isPlaying && !videoRef.current.paused) {
         videoRef.current.pause();
       }
-    } else if (videoRef.current && !videoRef.current.paused) {
-      videoRef.current.pause();
+    } else if (videoRef.current) {
+      if (!videoRef.current.paused) videoRef.current.pause();
+      if (videoRef.current.src) {
+         videoRef.current.removeAttribute('src');
+         videoRef.current.load();
+         videoRef.current.dataset.clipId = '';
+      }
     }
   }, [currentTime, tracks, isPlaying]);
 
@@ -346,24 +352,17 @@ export default function App(): React.JSX.Element {
     
     const tick = (now: number) => {
       if (isPlaying) {
-        const videoTrack = tracks.find(t => t.type === 'video');
-        const activeClip = videoTrack?.clips.find(c => currentTime >= c.start && currentTime < c.start + c.duration);
+        const deltaSec = (now - lastTime) / 1000;
+        lastTime = now;
         
         setCurrentTime(prev => {
-          let next = prev;
-          if (activeClip && videoRef.current && !videoRef.current.paused) {
-            next = activeClip.start + (videoRef.current.currentTime - activeClip.sourceStart);
-          } else {
-            const deltaSec = (now - lastTime) / 1000;
-            next = prev + deltaSec;
-          }
+          let next = prev + deltaSec;
           if (next >= totalDuration) {
             setIsPlaying(false);
             return prev;
           }
           return next;
         });
-        lastTime = now;
         animationFrame = requestAnimationFrame(tick);
       }
     };
@@ -372,7 +371,7 @@ export default function App(): React.JSX.Element {
       animationFrame = requestAnimationFrame(tick);
     }
     return () => cancelAnimationFrame(animationFrame);
-  }, [isPlaying, totalDuration, tracks, currentTime]);
+  }, [isPlaying, totalDuration]);
 
 
   useEffect(() => {
