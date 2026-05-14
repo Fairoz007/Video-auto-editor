@@ -220,7 +220,7 @@ def main():
     video_files = sorted(list(unique_files.values()))
 
     if not video_files:
-        print(f"No videos found in {input_folder}/ directory. Please add full movie files there.")
+        print(f"No videos found in {input_path}/ directory. Please add full movie files there.")
         return
         
     print(f"Found {len(video_files)} movie files.")

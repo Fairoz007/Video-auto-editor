@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import AutomationDashboard from './components/AutomationDashboard'
+import AutoEditDashboard from './components/AutoEditDashboard'
 
 type TrackType = 'video' | 'audio' | 'text' | 'effect';
 
@@ -35,6 +36,7 @@ type Track = {
 export default function App(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const [mediaFiles, setMediaFiles] = useState<string[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
   
   // Video Player State
@@ -116,10 +118,10 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!draggingClip) return;
-      const timelineEl = document.getElementById('timeline-container');
-      if (!timelineEl) return;
+      const trackEl = document.getElementById(`track-${draggingClip.trackId}`);
+      if (!trackEl) return;
 
-      const pxPerSec = (timelineEl.clientWidth / totalDuration) * timelineZoom;
+      const pxPerSec = trackEl.clientWidth / totalDuration;
       const deltaX = e.clientX - draggingClip.startX;
       const deltaSec = deltaX / pxPerSec;
 
@@ -400,37 +402,7 @@ export default function App(): React.JSX.Element {
       const file = await window.api.selectFile()
       if (file) {
         setSelectedFile(file)
-        
-        // Add to timeline automatically
-        const videoElement = document.createElement('video');
-        videoElement.src = `file://${file}`;
-        videoElement.onloadedmetadata = () => {
-          const dur = videoElement.duration;
-          setTotalDuration(prevDur => dur > prevDur ? dur + 10 : prevDur);
-          
-          const newVideoClip: Clip = {
-            id: Math.random().toString(36).substr(2, 9),
-            name: file.split('/').pop() || 'Video',
-            type: 'video',
-            start: 0,
-            duration: dur,
-            sourceStart: 0,
-            sourceFile: file,
-          };
-          
-          setTracks(prevTracks => {
-             const newTracks = prevTracks.map(t => t.id === 'v1' ? { ...t, clips: [...t.clips, newVideoClip] } : t);
-             setHistory(prevHistory => {
-                const idx = historyIndexRef.current;
-                const newHistory = prevHistory.slice(0, idx + 1);
-                newHistory.push(newTracks);
-                if (newHistory.length > 50) newHistory.shift();
-                return newHistory;
-             });
-             setHistoryIndex(prev => Math.min(prev + 1, 49));
-             return newTracks;
-          });
-        };
+        setMediaFiles(prev => prev.includes(file) ? prev : [...prev, file])
         
         if (autoCut) {
           setIsAnalyzing(true)
@@ -473,7 +445,7 @@ export default function App(): React.JSX.Element {
     const rect = e.currentTarget.getBoundingClientRect()
     const clickX = e.clientX - rect.left
     const percent = clickX / rect.width
-    const newTime = (percent * totalDuration) / timelineZoom
+    const newTime = percent * totalDuration
     setCurrentTime(newTime)
   }
 
@@ -581,6 +553,7 @@ export default function App(): React.JSX.Element {
             <SidebarItem icon={<Home />} label="Dashboard" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} isBrand />
             <SidebarItem icon={<ImageIcon />} label="Media" active={activeTab === 'media'} onClick={() => setActiveTab('media')} />
             <SidebarItem icon={<Scissors />} label="Edit" active={activeTab === 'edit'} onClick={() => setActiveTab('edit')} />
+            <SidebarItem icon={<Video />} label="Auto Edit" active={activeTab === 'auto-edit'} onClick={() => setActiveTab('auto-edit')} />
             <SidebarItem icon={<Type />} label="Text / Overlays" active={activeTab === 'text'} onClick={() => setActiveTab('text')} />
             <SidebarItem icon={<Sparkles />} label="Effects" active={activeTab === 'effects'} onClick={() => setActiveTab('effects')} />
             <SidebarItem icon={<SlidersHorizontal />} label="Transitions" active={activeTab === 'transitions'} onClick={() => setActiveTab('transitions')} />
@@ -623,6 +596,8 @@ export default function App(): React.JSX.Element {
           
           {activeTab === 'automation' ? (
              <AutomationDashboard />
+          ) : activeTab === 'auto-edit' ? (
+             <AutoEditDashboard />
           ) : (
             <>
               {/* Top Center: Workspace */}
@@ -656,19 +631,26 @@ export default function App(): React.JSX.Element {
 
                     {/* Grid */}
                     <div className="grid grid-cols-2 gap-3">
-                      {selectedFile && (
-                        <div className="group relative rounded-lg overflow-hidden bg-[#1f1f26] border border-brand-500 cursor-pointer transition-colors col-span-2">
-                           <div className="aspect-video bg-[#0d0d12] relative">
-                             <div className="absolute inset-0 bg-gradient-to-br from-brand-900/30 to-[#0d0d12]"></div>
-                             <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                                <Video className="w-6 h-6 text-white" />
-                             </div>
+                      {mediaFiles.map((file) => (
+                        <div 
+                          key={file}
+                          draggable
+                          onDragStart={(e) => {
+                             e.dataTransfer.setData('mediaPath', file);
+                             e.dataTransfer.effectAllowed = 'copy';
+                          }}
+                          className={clsx("group relative rounded-lg overflow-hidden border cursor-grab active:cursor-grabbing transition-colors col-span-2", selectedFile === file ? "border-brand-500" : "border-[#262630] hover:border-brand-500")}
+                          onClick={() => setSelectedFile(file)}
+                        >
+                           <video src={`file://${file}`} className="w-full aspect-video object-cover bg-black" />
+                           <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                             <span className="text-[10px] font-semibold text-white px-2 py-1 bg-brand-500 rounded">Drag to Timeline</span>
                            </div>
-                           <div className="p-2">
-                             <p className="text-[10px] text-white/90 truncate">{selectedFile.split('/').pop()}</p>
+                           <div className="absolute bottom-0 left-0 right-0 p-1.5 bg-gradient-to-t from-black/80 to-transparent pointer-events-none">
+                             <p className="text-[10px] text-white/90 truncate">{file.split('/').pop()}</p>
                            </div>
                         </div>
-                      )}
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -821,45 +803,94 @@ export default function App(): React.JSX.Element {
             </div>
 
             {/* Tracks Area */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden relative bg-[#0d0d12]" id="timeline-container">
-               {/* Time ruler */}
-               <div className="h-6 border-b border-[#262630] flex relative" onClick={handleTimelineClick}>
-                  <div className="w-40 bg-[#141419] border-r border-[#262630] z-20 shrink-0"></div>
-                  <div className="flex-1 relative cursor-text">
-                     {Array.from({length: Math.ceil(totalDuration / 5)}).map((_, i) => (
-                        <div key={i} className="absolute top-0 bottom-0 border-l border-[#262630] pl-1 text-[9px] text-white/30 font-mono select-none" style={{ left: `${(i * 5 / totalDuration) * 100 * timelineZoom}%` }}>
-                           00:{(i * 5).toString().padStart(2, '0')}
-                        </div>
-                     ))}
-                  </div>
-               </div>
+            <div className="flex-1 overflow-x-auto overflow-y-auto relative bg-[#0d0d12]" id="timeline-container">
+               <div className="min-w-full flex flex-col relative" style={{ width: `calc(10rem + ${100 * timelineZoom}%)` }}>
+                 {/* Time ruler */}
+                 <div className="h-6 border-b border-[#262630] flex sticky top-0 z-40 bg-[#141419]">
+                    <div className="w-40 bg-[#141419] border-r border-[#262630] z-50 shrink-0 sticky left-0"></div>
+                    <div className="flex-1 relative cursor-text" onClick={handleTimelineClick}>
+                       {Array.from({length: Math.ceil(totalDuration / 5)}).map((_, i) => (
+                          <div key={i} className="absolute top-0 bottom-0 border-l border-[#262630] pl-1 text-[9px] text-white/30 font-mono select-none" style={{ left: `${(i * 5 / totalDuration) * 100}%` }}>
+                             00:{(i * 5).toString().padStart(2, '0')}
+                          </div>
+                       ))}
+                    </div>
+                 </div>
 
-               {/* Playhead Guide */}
-               <div className="absolute top-0 bottom-0 w-px bg-brand-500 z-50 pointer-events-none transition-transform duration-75 ease-linear"
-                 style={{ left: `calc(10rem + ${(currentTime / totalDuration) * 100 * timelineZoom}%)` }}
-               >
-                 <div className="absolute top-4 -translate-x-1/2 w-2.5 h-2.5 rounded-sm bg-brand-500 rotate-45"></div>
-               </div>
+                 {/* Playhead Guide */}
+                 <div className="absolute top-6 bottom-0 w-px bg-brand-500 z-40 pointer-events-none"
+                   style={{ left: `calc(10rem + ${(currentTime / totalDuration) * 100}%)` }}
+                 >
+                   <div className="absolute top-0 -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-sm bg-brand-500 rotate-45"></div>
+                 </div>
 
-               <div className="space-y-[2px]">
-                 {tracks.map(track => (
-                   <div key={track.id} className="flex h-12 bg-[#141419]/50 hover:bg-[#141419] transition-colors border-b border-[#262630]/50 relative group">
-                     {/* Track Header */}
-                     <div className="w-40 border-r border-[#262630] flex flex-col justify-center px-3 bg-[#141419] z-20 shrink-0">
-                       <div className="flex items-center space-x-2">
-                         {track.type === 'video' ? <Video className="w-3 h-3 text-white/40" /> :
-                          track.type === 'audio' ? <Music className="w-3 h-3 text-white/40" /> :
-                          track.type === 'text' ? <Type className="w-3 h-3 text-white/40" /> :
-                          <Sparkles className="w-3 h-3 text-white/40" />}
-                         <span className="text-[9px] text-white/60 truncate">{track.name}</span>
+                 <div className="space-y-[2px]">
+                   {tracks.map(track => (
+                     <div key={track.id} className="flex h-12 bg-[#141419]/50 hover:bg-[#141419] transition-colors border-b border-[#262630]/50 relative group">
+                       {/* Track Header */}
+                       <div className="w-40 border-r border-[#262630] flex flex-col justify-center px-3 bg-[#141419] z-30 shrink-0 sticky left-0">
+                         <div className="flex items-center space-x-2">
+                           {track.type === 'video' ? <Video className="w-3 h-3 text-white/40" /> :
+                            track.type === 'audio' ? <Music className="w-3 h-3 text-white/40" /> :
+                            track.type === 'text' ? <Type className="w-3 h-3 text-white/40" /> :
+                            <Sparkles className="w-3 h-3 text-white/40" />}
+                           <span className="text-[9px] text-white/60 truncate">{track.name}</span>
+                         </div>
                        </div>
-                     </div>
-                     
-                     {/* Track Canvas */}
-                     <div className="flex-1 relative" onClick={handleTimelineClick}>
-                        {track.clips.map(clip => {
-                          const leftPercent = (clip.start / totalDuration) * 100 * timelineZoom;
-                          const widthPercent = (clip.duration / totalDuration) * 100 * timelineZoom;
+                       
+                       {/* Track Canvas */}
+                       <div 
+                         id={`track-${track.id}`}
+                         className="flex-1 relative" 
+                         onClick={handleTimelineClick}
+                         onDragOver={(e) => {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'copy';
+                         }}
+                         onDrop={(e) => {
+                            e.preventDefault();
+                            const file = e.dataTransfer.getData('mediaPath');
+                            if (file) {
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              const clickX = e.clientX - rect.left;
+                              const percent = clickX / rect.width;
+                              const newTime = percent * totalDuration;
+                              
+                              const videoElement = document.createElement('video');
+                              videoElement.src = `file://${file}`;
+                              videoElement.onloadedmetadata = () => {
+                                const dur = videoElement.duration;
+                                setTotalDuration(prevDur => dur + newTime > prevDur ? dur + newTime + 10 : prevDur);
+                                
+                                const newVideoClip: Clip = {
+                                  id: Math.random().toString(36).substr(2, 9),
+                                  name: file.split('/').pop() || 'Video',
+                                  type: track.type,
+                                  start: newTime,
+                                  duration: dur,
+                                  sourceStart: 0,
+                                  sourceFile: file,
+                                };
+                                
+                                setTracks(prevTracks => {
+                                   const newTracks = prevTracks.map(t => t.id === track.id ? { ...t, clips: [...t.clips, newVideoClip] } : t);
+                                   setHistory(prevHistory => {
+                                      const idx = historyIndexRef.current;
+                                      const newHistory = prevHistory.slice(0, idx + 1);
+                                      newHistory.push(newTracks);
+                                      if (newHistory.length > 50) newHistory.shift();
+                                      return newHistory;
+                                   });
+                                   setHistoryIndex(prev => Math.min(prev + 1, 49));
+                                   return newTracks;
+                                });
+                              };
+                            }
+                         }}
+                       >
+                          {track.clips.map(clip => {
+                            const leftPercent = (clip.start / totalDuration) * 100;
+                            const widthPercent = (clip.duration / totalDuration) * 100;
                           const isSelected = selectedClipId === clip.id;
                           
                           let bgClass = 'bg-[#1f1f26] border-[#262630]';
@@ -897,6 +928,7 @@ export default function App(): React.JSX.Element {
                      </div>
                    </div>
                  ))}
+               </div>
                </div>
             </div>
           </div>

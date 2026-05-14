@@ -6,9 +6,11 @@ from PIL import Image, ImageDraw, ImageFont
 from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, vfx
 from tqdm import tqdm
 
+import argparse
+
 # --- CONFIGURATION ---
-INPUT_FOLDER = r"c:\Users\LUTTA\Videos\Overwolf\Outplayed\Valorant\Valorant_04-26-2026_21-3-58-246"
-OUTPUT_FOLDER = os.path.join(INPUT_FOLDER, "Shorts_Output")
+INPUT_FOLDER = ""
+OUTPUT_FOLDER = ""
 TOP_TEXT_TEMPLATE = "Part {}"
 BOTTOM_TEXT = "Five Smokes"
 TARGET_RES = (1080, 1920) # Width, Height
@@ -123,11 +125,24 @@ def process_video(file_path, output_path, part_num):
     if os.path.exists(bottom_path): os.remove(bottom_path)
 
 def main():
+    parser = argparse.ArgumentParser(description="Autoedit Valorant Shorts")
+    parser.add_argument("--input", type=str, required=True, help="Input folder containing the Valorant clips")
+    parser.add_argument("--output", type=str, required=False, help="Output folder")
+    parser.add_argument("--top_text", type=str, default="Part {}", help="Top text template")
+    parser.add_argument("--bottom_text", type=str, default="Five Smokes", help="Bottom text")
+    args = parser.parse_args()
+
+    global INPUT_FOLDER, OUTPUT_FOLDER, TOP_TEXT_TEMPLATE, BOTTOM_TEXT
+    INPUT_FOLDER = args.input
+    OUTPUT_FOLDER = args.output if args.output else os.path.join(INPUT_FOLDER, "Shorts_Output")
+    TOP_TEXT_TEMPLATE = args.top_text
+    BOTTOM_TEXT = args.bottom_text
+
     if not os.path.exists(OUTPUT_FOLDER):
         os.makedirs(OUTPUT_FOLDER)
 
-    # Get all mp4 files starting with "part"
-    files = sorted([f for f in os.listdir(INPUT_FOLDER) if f.lower().endswith(".mp4") and f.lower().startswith("part")])
+    # Get all mp4 files
+    files = sorted([f for f in os.listdir(INPUT_FOLDER) if f.lower().endswith(".mp4")])
     
     if not files:
         print("No mp4 files found in the input folder.")
