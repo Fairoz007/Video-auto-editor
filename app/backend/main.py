@@ -363,6 +363,47 @@ async def get_status(job_id: str):
         print(f"[LOG] Status check {job_id}: {data.get('status')} | Progress: {data.get('progress')}% | Metadata Count: {len(data.get('metadata_list', []))}")
     return data
 
+from scenedetect import detect, AdaptiveDetector, split_video_ffmpeg
+import whisper
+
+# Initialize Whisper model (load on demand or at startup)
+model = None
+
+def get_whisper_model():
+    global model
+    if model is None:
+        print("[LOG] Loading Whisper model...")
+        model = whisper.load_model("base")
+    return model
+
+@app.post("/detect-scenes")
+async def detect_scenes(file_path: str = Form(...)):
+    print(f"[LOG] Detecting scenes for: {file_path}")
+    try:
+        scene_list = detect(file_path, AdaptiveDetector())
+        scenes = []
+        for i, scene in enumerate(scene_list):
+            scenes.append({
+                "index": i,
+                "start": scene[0].get_seconds(),
+                "end": scene[1].get_seconds(),
+                "duration": scene[1].get_seconds() - scene[0].get_seconds()
+            })
+        return {"status": "success", "scenes": scenes}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/transcribe")
+async def transcribe_video(file_path: str = Form(...)):
+    print(f"[LOG] Transcribing: {file_path}")
+    try:
+        w_model = get_whisper_model()
+        result = w_model.transcribe(file_path)
+        return {"status": "success", "text": result["text"], "segments": result["segments"]}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
+    # Change port if needed or use environment variable
     uvicorn.run(app, host="0.0.0.0", port=8000)

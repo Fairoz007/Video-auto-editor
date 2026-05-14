@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+python-multipart
+pydantic
+moviepy
+Pillow
+proglog
+numpy
+scenedetect
+openai-whisper
+openai
+python-dotenv
+torch
+torchvision
+torchaudio
+imageio-ffmpeg

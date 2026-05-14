@@ -1,0 +1,41 @@
+appId: com.fairoz.videoeditor
+productName: Video Auto Editor Pro
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - 'app/**/*'
+  - 'autoedit.py'
+  - 'movie_editor.py'
+  - 'shorts_editor.py'
+  - 'generate_descriptions.py'
+  - 'generate_titles.py'
+  - 'upload.js'
+  - 'package.json'
+asarUnpack:
+  - resources/**
+  - app/**
+win:
+  executableName: VideoAutoEditor
+nsis:
+  artifactName: ${productName}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+mac:
+  artifactName: ${productName}-${version}.${ext}
+  category: public.app-category.video
+  notarize: false
+linux:
+  target:
+    - AppImage
+  category: Video
+publish:
+  provider: github
+  owner: Fairoz007
+  repo: Video-auto-editor
