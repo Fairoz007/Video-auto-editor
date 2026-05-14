@@ -64,7 +64,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.fairoz.autovideo.pro')
+  electronApp.setAppUserModelId('com.fairoz.videoeditor')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

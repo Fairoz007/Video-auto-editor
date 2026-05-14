@@ -1,5 +1,5 @@
 {
-  "name": "autovideo-pro",
+  "name": "video-auto-editor",
   "version": "1.0.0",
   "description": "Professional AI-powered video production suite",
   "main": "./out/main/index.js",
